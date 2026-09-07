@@ -20,16 +20,19 @@ _FOLD = {
 
 # Stripped before comparing a brand to a registered company name. "Aoi" has to
 # reach "Ravintola Aoi Oy" — see Phase 5 join key 2.
-_COMPANY_TOKENS = {
-    # Finnish / Swedish legal forms
+_LEGAL_FORMS = {
+    # Finnish / Swedish
     "oy", "ab", "oyj", "ky", "tmi", "ry", "osk", "oyab",
-    # Estonian legal forms
-    "ou", "oü", "as", "mtu", "mtü", "fie", "tu", "tü",
-    # Descriptive prefixes that are part of the trade name but not the brand
-    "ravintola", "ravintolat", "restaurant", "restaurants", "restoran",
-    "restoran", "resto", "kahvila", "baari", "bar", "bistro", "cafe",
-    "kohvik", "toitlustus",
+    # Estonian
+    "ou", "as", "mtu", "fie", "tu",
 }
+# Descriptive words that are part of the trade name but not the brand.
+_DESCRIPTIVE = {
+    "ravintola", "ravintolat", "restaurant", "restaurants", "restoran",
+    "resto", "kahvila", "baari", "bar", "bistro", "cafe", "kohvik",
+    "toitlustus",
+}
+_COMPANY_TOKENS = _LEGAL_FORMS | _DESCRIPTIVE
 
 
 def strip_diacritics(s: str) -> str:
@@ -60,13 +63,19 @@ def normalise_text(s: str | None) -> str:
 def normalise_name(s: str | None) -> str:
     """normalise_text plus removal of legal forms and descriptive prefixes.
 
-    Falls back to the un-stripped form when stripping would empty the string,
-    so a company literally named "Ravintola Oy" still compares as something.
+    When stripping would empty the string, legal forms alone are removed, so a
+    company literally named "Kohvik OU" still compares equal to "Kohvik".
     """
     base = normalise_text(s)
     if not base:
         return ""
     tokens = [t for t in base.split() if t not in _COMPANY_TOKENS]
+    if tokens:
+        return " ".join(tokens)
+    # An entirely generic name ("Kohvik OU"): keep the descriptive word so it
+    # still compares equal to the same venue written without its legal form,
+    # rather than falling all the way back to the raw string.
+    tokens = [t for t in base.split() if t not in _LEGAL_FORMS]
     return " ".join(tokens) if tokens else base
 
 
