@@ -285,6 +285,18 @@ CREATE TABLE IF NOT EXISTS pipedrive_sync (
     synced_at           TEXT
 );
 
+-- Pipedrive custom-field keys are generated per account, so they are resolved
+-- once and cached rather than hardcoded.
+CREATE TABLE IF NOT EXISTS pipedrive_fields (
+    entity              TEXT,              -- organization | person
+    our_name            TEXT,
+    field_key           TEXT,
+    field_type          TEXT,
+    options_json        TEXT,
+    resolved_at         TEXT,
+    PRIMARY KEY (entity, our_name)
+);
+
 CREATE TABLE IF NOT EXISTS run_log (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     phase               TEXT,

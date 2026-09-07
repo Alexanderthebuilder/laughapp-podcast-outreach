@@ -238,12 +238,47 @@ NAME_STOPWORDS = {
 }
 
 
+# Every individual word appearing in a role title. A role sits directly beside
+# the name it belongs to ("Myyntipaallikko Liisa Koskinen"), and NAME_RE has no
+# way to tell a capitalised job title from a capitalised forename.
+_ROLE_WORDS = {w for kw in ROLE_KEYWORDS
+               for w in strip_diacritics(kw).lower().split()}
+
+
+_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+def _mask_labels(window: str) -> str:
+    """Blank out label and role words, preserving character offsets.
+
+    NAME_RE matches a run of capitalised words, and a capitalised job title
+    directly in front of a name is part of that run ("Head Chef Anna Nurmi"
+    captures three words and loses the surname). Masking the title in place
+    breaks the run without shifting any offset used for distance ranking.
+    """
+    def repl(m: re.Match) -> str:
+        token = strip_diacritics(m.group(0)).lower()
+        if token in NAME_STOPWORDS or token in _ROLE_WORDS:
+            return "\u00b7" * len(m.group(0))
+        return m.group(0)
+
+    return _WORD_RE.sub(repl, window)
+
+
 def _trim_labels(name: str) -> str:
-    """Drop leading/trailing label words: "Yhteyshenkilo Matti Virtanen"."""
+    """Drop leading/trailing label and role words.
+
+    "Yhteyshenkilo Matti Virtanen" and "Myyntipaallikko Liisa Koskinen" both
+    reduce to the two-word human name.
+    """
+    def _is_label(token: str) -> bool:
+        t = strip_diacritics(token).lower().strip(".,:;")
+        return t in NAME_STOPWORDS or t in _ROLE_WORDS
+
     parts = name.split()
-    while parts and strip_diacritics(parts[0]).lower() in NAME_STOPWORDS:
+    while parts and _is_label(parts[0]):
         parts.pop(0)
-    while parts and strip_diacritics(parts[-1]).lower() in NAME_STOPWORDS:
+    while parts and _is_label(parts[-1]):
         parts.pop()
     return " ".join(parts)
 
@@ -301,8 +336,9 @@ def attribute_person(text: str, email: str, offset: int | None = None
         return None, role
 
     # Prefer the name closest to the address.
+    masked = _mask_labels(window)
     best, best_dist = None, None
-    for m in NAME_RE.finditer(window):
+    for m in NAME_RE.finditer(masked):
         cand = _trim_labels(m.group(1).strip())
         if not _looks_like_person(cand):
             continue
