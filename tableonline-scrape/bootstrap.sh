@@ -43,19 +43,9 @@ if [ ! -f .env ]; then
     echo "==> created .env from .env.example"
 fi
 if [ -n "${GOOGLE_PLACES_API_KEY:-}" ]; then
-    python - "$GOOGLE_PLACES_API_KEY" <<'PY'
-import pathlib, re, sys
-key = sys.argv[1]
-p = pathlib.Path(".env")
-text = p.read_text()
-if re.search(r"^GOOGLE_PLACES_API_KEY=.*$", text, re.M):
-    text = re.sub(r"^GOOGLE_PLACES_API_KEY=.*$",
-                  f"GOOGLE_PLACES_API_KEY={key}", text, flags=re.M)
-else:
-    text += f"\nGOOGLE_PLACES_API_KEY={key}\n"
-p.write_text(text)
-print("==> wrote GOOGLE_PLACES_API_KEY into .env")
-PY
+    # Written through env_check, which collapses duplicate assignments rather
+    # than appending a second one.
+    python -m src.env_check --set "GOOGLE_PLACES_API_KEY=${GOOGLE_PLACES_API_KEY}"
 fi
 chmod 600 .env
 

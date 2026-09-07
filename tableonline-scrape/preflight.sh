@@ -3,7 +3,6 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 [ -d .venv ] && . .venv/bin/activate
-set -a; [ -f .env ] && . ./.env; set +a
 
 fail=0
 ok()   { printf '  \033[32mOK\033[0m    %s\n' "$1"; }
@@ -24,6 +23,13 @@ for id in 92 1528; do
     code=${code:-000}
     if [ "$code" = "200" ]; then ok "/en/x/x/$id -> 200"; else bad "/en/x/x/$id -> $code (expected 200)"; fi
 done
+
+echo "== .env =="
+# Read .env with python-dotenv, exactly as the pipeline does. Shell-sourcing it
+# here would apply different quoting rules, so preflight could pass on a file
+# the real run reads differently.
+if python -m src.env_check 2>&1 | sed 's/^/  /'; then :; else fail=1; fi
+GOOGLE_PLACES_API_KEY=$(python -m src.env_check --print GOOGLE_PLACES_API_KEY 2>/dev/null)
 
 echo "== Google Places (New) =="
 if [ -z "${GOOGLE_PLACES_API_KEY:-}" ]; then
@@ -61,7 +67,7 @@ else
             bad "\"Places API (New)\" is not enabled on the project."
             printf '        Enable it at: https://console.cloud.google.com/apis/library/places.googleapis.com\n' ;;
         *API_KEY_INVALID*)
-            bad "Google does not recognise this key."
+            bad "Google does not recognise the value .env is sending."
             printf '        Likely one of:\n'
             printf '          - the key was deleted, regenerated, or auto-disabled after being exposed\n'
             printf '          - .env holds a truncated or mistyped value\n'

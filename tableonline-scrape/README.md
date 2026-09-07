@@ -37,7 +37,19 @@ Then confirm the run can actually succeed before spending hours on it:
 ./preflight.sh
 ```
 
-It checks that `tableonline.fi` answers, that the `/en/x/x/{id}` shortcut
+It first checks `.env` itself — reading it with python-dotenv, the same parser
+the pipeline uses, so what it validates is what the run will actually get. A
+duplicated assignment or a stray quote makes one line swallow the next, and the
+resulting value is reported with its real length rather than being sent to
+Google as-is. Repair any variable with:
+
+```bash
+python -m src.env_check --set GOOGLE_PLACES_API_KEY=<key>
+```
+
+which rewrites that one line and collapses any duplicates.
+
+It then checks that `tableonline.fi` answers, that the `/en/x/x/{id}` shortcut
 returns 200, that the Places key works **from this server's IP**, and that
 Chromium launches. If the key is IP-restricted it prints the exact IPv4 to add
 in the GCP console. Do not start the run until every line reads OK.
@@ -192,6 +204,7 @@ tableonline-scrape/
 ├── src/export_sheet.py     # the contact sheet (xlsx + csv)
 ├── bootstrap.sh            # one-time VPS setup, idempotent
 ├── preflight.sh            # verifies connectivity, API key and browser
+├── src/env_check.py        # inspect, validate and repair .env
 ├── lib/                    # business_id, normalise, emails, pagekind, registries, http, db
 ├── raw/                    # every raw response, never overwritten (gitignored)
 ├── exports/                # CSV and Pipedrive payloads (gitignored)
