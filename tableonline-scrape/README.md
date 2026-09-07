@@ -1,18 +1,23 @@
 # TableOnline Attack List
 
 A contact-enriched lead database of every restaurant using TableOnline in
-Finland and Estonia, joined to the national business registers and loaded into
-Pipedrive as the "TableOnline Attack List".
+Finland and Estonia.
 
-Target: ~600–1,100 restaurants, ≥85% with a deliverable email, ≥40% with a
-named human contact.
+The deliverable is a contact sheet — restaurant, contact first name, email,
+area, phone — produced by `src/export_sheet.py`. The business-register join
+and the Pipedrive load are built and tested, but they are optional extras, not
+part of the path to the sheet.
+
+Target: ~600–1,100 restaurants, ≥85% with an email, ≥40% with a named human
+contact.
 
 ## Where this runs
 
 **On the VPS (72.62.76.233), inside a named tmux session.** The full sweep plus
 website crawls is several hours of wall time and must survive disconnection.
-The host also needs outbound access to `tableonline.fi`, `avoindata.prh.fi`,
-`avaandmed.ariregister.rik.ee`, `places.googleapis.com` and `api.pipedrive.com`.
+The host needs outbound access to `tableonline.fi` and `places.googleapis.com`
+(plus `avoindata.prh.fi` and `avaandmed.ariregister.rik.ee` for the optional
+registry join).
 
 ```bash
 tmux new -s tableonline
@@ -23,72 +28,116 @@ playwright install chromium        # Phases 1a-bis, 2 render, 4 tier 3
 cp .env.example .env               # then fill it in — .env is gitignored
 ```
 
-## Credentials you must supply
+## Credentials
 
-| Needed for | What | When |
+| Needed for | What | Status |
 |---|---|---|
-| Phase 3 | Google Places API key. GCP project with billing enabled and **"Places API (New)"** enabled specifically — not the legacy Places API. Restrict the key to that API. | Before Phase 3 — the one hard blocker |
-| Phase 7 | Pipedrive API token (personal settings → API) | Before Phase 7 |
-| Phase 6 | Email verifier account — MillionVerifier or Bouncer | Deferrable |
-| Phase 4 Tier 3 | Firecrawl key | Only if Cloudflare-blocked domains appear; skip initially |
+| Phase 3 | Google Places API key, **"Places API (New)"** enabled specifically — not the legacy Places API | In `.env`. The key is IP-restricted, so **add the VPS IP `72.62.76.233`** to it in the GCP console or every call returns `API_KEY_IP_ADDRESS_BLOCKED` |
+| Phase 6 verify | MillionVerifier or Bouncer | Optional — only needed to confirm guessed addresses |
+| Phase 4 Tier 3 | Firecrawl key | Only if Cloudflare-blocked domains appear |
+| Phase 7 | Pipedrive API token | Not needed for the contact sheet |
 
-All of these live in `.env`, which is gitignored. No key is ever inlined in
-source.
+`.env` is gitignored. No key is ever inlined in source.
 
-## Run order
+## Run order — contact sheet
+
+This is the path to `exports/tableonline_contacts.xlsx`. Phase 7 (Pipedrive) is
+not part of it.
 
 Every phase takes `--limit` and `--resume`. **Prove each one with `--limit 20`
-before running it full-scale.** Review `run_report.md` between phases.
+before running it full-scale**, and read `run_report.md` between phases.
 
 ```bash
-# Phase 1 — enumeration
-python -m src.phase1_enumerate discover                    # robots, sitemap, city selector, bundle APIs
-python -m src.phase1_enumerate crosscheck                  # 1a-bis: rule out silent under-collection FIRST
-python -m src.phase1_enumerate sweep --limit 20            # prove it
-python -m src.phase1_enumerate sweep --resume              # IDs 1..2500
-python -m src.phase1_enumerate coverage --sample 50        # 1c: confirm the gaps are real 404s
+# Step 1 — is the shortcut safe?  Run this BEFORE the sweep.
+python -m src.phase1_enumerate discover
+python -m src.phase1_enumerate crosscheck          # prints ZERO MISSES or N MISSES
 
-# Phase 2 — detail
-python -m src.phase2_detail http --resume                  # meta tags, no browser, uses the stored raw corpus
-python -m src.phase2_detail render --limit 20              # then --resume for the rest
+# Step 2 — find every restaurant  (~40 min: 2500 IDs at 1-2s apart)
+python -m src.phase1_enumerate sweep --limit 20    # prove it
+python -m src.phase1_enumerate sweep --resume      # the real sweep
+python -m src.phase1_enumerate coverage --sample 50
 
-# Phase 3 — Google Places  (needs GOOGLE_PLACES_API_KEY)
+# Step 3 — names and descriptions, then the JS-only fields
+python -m src.phase2_detail http --resume
+python -m src.phase2_detail render --limit 20
+python -m src.phase2_detail render --resume
+
+# Step 4 — Google Places: this is where the phone numbers and websites come from
 python -m src.phase3_places match --limit 20
 python -m src.phase3_places match --resume
 python -m src.phase3_places seed-websites
 
-# Phase 4 — website crawl
+# Step 5 — the websites: emails and named people  (the long one, run overnight)
 python -m src.phase4_website_crawl crawl --limit 20
 python -m src.phase4_website_crawl crawl --resume
 
-# Phase 5 — business registers
-python -m src.phase5_registry fi-download
-python -m src.phase5_registry fi-load
-python -m src.phase5_registry ee-load \
-    --companies raw/registry/ettevotja_rekvisiidid.csv.zip \
-    --board     raw/registry/kandevalised.csv.zip
-python -m src.phase5_registry match
-python -m src.phase5_registry groups
-
-# Phase 6 — secondary sources
-python -m src.phase6_secondary patterns
-python -m src.phase6_secondary verify                      # needs EMAIL_VERIFIER + key
-python -m src.phase6_secondary whois
-python -m src.phase6_secondary jobads --limit 20
-
-# Phase 7 — scoring and Pipedrive
-python -m src.phase7_pipedrive score
-python -m src.phase7_pipedrive export                      # CSV, review before it hits the CRM
-python -m src.phase7_pipedrive setup                       # resolve/create custom fields
-python -m src.phase7_pipedrive push --dry-run              # payloads to exports/, nothing sent
-python -m src.phase7_pipedrive push
+# Step 6 — the sheet
+python -m src.export_sheet
+python -m src.export_sheet --only-with-email --name tableonline_sendable
 ```
 
-The Estonian bulk files must be downloaded by hand from
-<https://avaandmed.ariregister.rik.ee> (downloading open-data section) — the
-published filenames change between releases, so `ee-load` takes explicit paths
-and resolves columns by matching header names rather than positions. If it
-loads zero rows it says so instead of silently succeeding.
+### Sheet columns
+
+`Restaurant · First name · Email · Area · Country · Phone`, then supporting
+columns: `Full name · Role · Email type · Backup email · Email source ·
+Company · TableOnline`.
+
+**Email type** is the column to trust before sending:
+
+| Value | Meaning |
+|---|---|
+| `personal` | a named person's address, taken from the site |
+| `shared inbox` | info@ / myynti@ — real, but nobody is named |
+| `guessed` | built from a name and the domain; unverified, may bounce |
+| `catch-all (unconfirmed)` | the domain accepts everything, so delivery proves nothing |
+
+`Backup email` carries the best *confirmed* address whenever the primary is a
+guess, so a bounce does not lose the lead.
+
+## Optional extras
+
+```bash
+# Better first-name coverage in Tallinn and Tartu (see "Estonia" below)
+python -m src.phase5_registry ee-load --companies <file> --board <file>
+python -m src.phase5_registry match
+
+# Confirm guessed addresses before sending  (needs EMAIL_VERIFIER + key)
+python -m src.phase6_secondary patterns
+python -m src.phase6_secondary verify
+
+# Finnish registry: company names, payroll signal, excludes bankrupt venues
+python -m src.phase5_registry fi-download && python -m src.phase5_registry fi-load
+python -m src.phase5_registry match && python -m src.phase5_registry groups
+
+# Pipedrive, if it is ever wanted
+python -m src.phase7_pipedrive score
+python -m src.phase7_pipedrive push --dry-run
+```
+
+## Estonia
+
+Estonian restaurants need no special handling for the sheet. They are on the
+same domain as the Finnish ones — the city slug (`tallinn`, `tartu`, `parnu`)
+is the only country discriminator — so Steps 1–6 above collect them exactly
+like Finland, and `lib/cities.py` maps the slug to `EE`. An unrecognised slug
+leaves `country` NULL and is logged as an error rather than defaulted to FI.
+
+The one Estonia-specific gap is **first-name coverage**. Finnish sites are
+forced by GDPR to name a data controller on the privacy page, which is where
+most Finnish named contacts come from; Estonian sites do this less
+consistently. The fix is the e-Business Register, which publishes board
+members' names in full (personal ID codes are masked, the names are not):
+
+1. Open <https://avaandmed.ariregister.rik.ee/en/downloading-open-data>.
+2. Download the **company details** file (`ettevotja_rekvisiidid`) and the
+   **representation / board members** file. Both are free, no key, no account.
+3. Drop them in `raw/registry/` and run `ee-load` with the two paths, then
+   `match`.
+
+`ee-load` resolves columns by matching header names rather than positions,
+because the published filenames and column sets change between releases. If a
+file's headers match nothing it prints a warning and loads zero rows rather
+than silently succeeding.
 
 ## Design principles
 
@@ -115,6 +164,7 @@ tableonline-scrape/
 ├── docs/discovery.md       # confirmed facts + autogenerated discovery findings
 ├── db/schema.sql
 ├── src/phase1..7           # one CLI per phase, each with --limit and --resume
+├── src/export_sheet.py     # the contact sheet (xlsx + csv)
 ├── lib/                    # business_id, normalise, emails, pagekind, registries, http, db
 ├── raw/                    # every raw response, never overwritten (gitignored)
 ├── exports/                # CSV and Pipedrive payloads (gitignored)
