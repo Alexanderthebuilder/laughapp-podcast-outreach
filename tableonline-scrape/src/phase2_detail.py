@@ -145,6 +145,7 @@ def cmd_render(args) -> None:
 
                 store_raw(RAW_PAGES / f"{tid}.rendered.html", html)
                 d = parse_detail(html)
+                geo = _geo(html)
                 if "ld+json" in d["source"]:
                     counts["ld_json"] += 1
                 if d["street_address"]:
@@ -159,6 +160,7 @@ def cmd_render(args) -> None:
                     "phone": d["phone"],
                     "review_score": d["review_score"],
                     "review_count": d["review_count"],
+                    "lat": geo[0], "lng": geo[1],
                     "cuisine_tags": json.dumps(d["cuisine_tags"], ensure_ascii=False)
                                     if d["cuisine_tags"] else None,
                     "atmosphere_tags": json.dumps(d["atmosphere_tags"], ensure_ascii=False)
@@ -188,6 +190,17 @@ def cmd_render(args) -> None:
     finish(conn, args)
 
 
+def _geo(html: str) -> tuple[float | None, float | None]:
+    """Coordinates from JSON-LD, which is what lets Phase 3 apply the 150 m
+    proximity test instead of relying on name similarity alone."""
+    from lib import ldjson
+    ld = ldjson.extract(html)
+    try:
+        return float(ld["lat"]), float(ld["lng"])
+    except (KeyError, TypeError, ValueError):
+        return None, None
+
+
 def cmd_reparse(args) -> None:
     """Re-run parsing over the stored raw corpus without any network at all.
 
@@ -206,8 +219,11 @@ def cmd_reparse(args) -> None:
         except ValueError:
             continue
         counts["files"] += 1
-        d = parse_detail(f.read_text(encoding="utf-8", errors="replace"))
+        raw_html = f.read_text(encoding="utf-8", errors="replace")
+        d = parse_detail(raw_html)
+        geo = _geo(raw_html)
         upsert(conn, "restaurants", {"tableonline_id": tid}, {
+            "lat": geo[0], "lng": geo[1],
             "street_address": d["street_address"], "postal_code": d["postal_code"],
             "city": d["city"], "phone": d["phone"],
             "review_score": d["review_score"], "review_count": d["review_count"],

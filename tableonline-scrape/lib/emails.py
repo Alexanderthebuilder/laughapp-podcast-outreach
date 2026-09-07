@@ -20,11 +20,14 @@ from .normalise import strip_diacritics
 EMAIL_RE = re.compile(
     r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,24}\b")
 
-# "etunimi (at) ravintola [dot] fi", "info ät domain piste fi"
+# "etunimi (at) ravintola [dot] fi", "info ät domain piste fi".
+# Whitespace is allowed only around a genuinely obfuscated separator. A bare
+# "@" or "." must be unspaced, otherwise the pattern spans the gap between two
+# elements and invents an address out of two unrelated fragments.
+_AT = r"(?:\s*[\[({]\s*(?:@|at|\u00e4t)\s*[\])}]\s*|\s+(?:at|\u00e4t|miuku|at-merkki)\s+|@)"
+_DOT = r"(?:\s*[\[({]\s*(?:\.|dot|piste|punkt)\s*[\])}]\s*|\s+(?:dot|piste|punkt)\s+|\.)"
 OBFUSCATED_RE = re.compile(
-    r"([A-Za-z0-9._%+\-]+)\s*(?:\[|\(|\{)?\s*(?:@|at|ät|at-merkki|miuku)\s*"
-    r"(?:\]|\)|\})?\s*([A-Za-z0-9.\-]+)\s*(?:\[|\(|\{)?\s*"
-    r"(?:\.|dot|piste|punkt|punkt)\s*(?:\]|\)|\})?\s*([A-Za-z]{2,24})\b",
+    r"([A-Za-z0-9._%+\-]+)" + _AT + r"([A-Za-z0-9.\-]+)" + _DOT + r"([A-Za-z]{2,24})\b",
     re.IGNORECASE)
 
 # Domains that belong to the CMS, the agency, or the analytics vendor — never

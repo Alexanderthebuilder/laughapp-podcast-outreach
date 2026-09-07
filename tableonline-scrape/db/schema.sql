@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS restaurants (
     atmosphere_tags     TEXT,              -- JSON array
     review_score        REAL,
     review_count        INTEGER,
+    lat                 REAL,              -- from JSON-LD geo where present;
+    lng                 REAL,              -- enables the Phase 3 150 m test
     is_michelin         INTEGER DEFAULT 0,
     has_active_offer    INTEGER DEFAULT 0,
     accepts_giftcard    INTEGER DEFAULT 0,
