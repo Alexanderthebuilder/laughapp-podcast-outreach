@@ -11,22 +11,47 @@ part of the path to the sheet.
 Target: ~600–1,100 restaurants, ≥85% with an email, ≥40% with a named human
 contact.
 
-## Where this runs
+## Setup on the VPS
 
-**On the VPS (72.62.76.233), inside a named tmux session.** The full sweep plus
-website crawls is several hours of wall time and must survive disconnection.
-The host needs outbound access to `tableonline.fi` and `places.googleapis.com`
-(plus `avoindata.prh.fi` and `avaandmed.ariregister.rik.ee` for the optional
-registry join).
+**On the VPS (72.62.76.233), inside a named tmux session.** The sweep plus the
+website crawls run for hours and must survive a dropped connection. The host
+needs outbound access to `tableonline.fi` and `places.googleapis.com`.
 
 ```bash
-tmux new -s tableonline
-cd tableonline-scrape
-python3 -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-playwright install chromium        # Phases 1a-bis, 2 render, 4 tier 3
-cp .env.example .env               # then fill it in — .env is gitignored
+tmux new -s tableonline          # or: tmux attach -t tableonline
+
+git clone https://github.com/Alexanderthebuilder/laughapp-podcast-outreach.git
+cd laughapp-podcast-outreach/tableonline-scrape
+
+GOOGLE_PLACES_API_KEY=<your-key> ./bootstrap.sh
 ```
+
+`bootstrap.sh` installs the system packages, builds the virtualenv, installs
+Chromium with the shared libraries it needs, writes `.env`, and runs the test
+suite. It is idempotent — re-run it any time.
+
+Then confirm the run can actually succeed before spending hours on it:
+
+```bash
+. .venv/bin/activate
+./preflight.sh
+```
+
+It checks that `tableonline.fi` answers, that the `/en/x/x/{id}` shortcut
+returns 200, that the Places key works **from this server's IP**, and that
+Chromium launches. If the key is IP-restricted it prints the exact IPv4 to add
+in the GCP console. Do not start the run until every line reads OK.
+
+### tmux, briefly
+
+A blank screen with a green bar along the bottom means tmux is running — that
+is the expected result of `tmux new`, not an error.
+
+| | |
+|---|---|
+| Leave it running, close the browser | `Ctrl-b` then `d` |
+| Come back later | `tmux attach -t tableonline` |
+| Scroll back through output | `Ctrl-b` then `[`, then arrows; `q` to exit |
 
 ## Credentials
 
@@ -165,6 +190,8 @@ tableonline-scrape/
 ├── db/schema.sql
 ├── src/phase1..7           # one CLI per phase, each with --limit and --resume
 ├── src/export_sheet.py     # the contact sheet (xlsx + csv)
+├── bootstrap.sh            # one-time VPS setup, idempotent
+├── preflight.sh            # verifies connectivity, API key and browser
 ├── lib/                    # business_id, normalise, emails, pagekind, registries, http, db
 ├── raw/                    # every raw response, never overwritten (gitignored)
 ├── exports/                # CSV and Pipedrive payloads (gitignored)
