@@ -46,7 +46,13 @@ SITES = {
     "https://ravintola-aoi.fi/wp-json/wp/v2/users?per_page=100&_fields=id,name,slug": ("[]", 200),
 
     "https://elevant.ee": (
-        '<html><body><p>Restoran Elevant, Tallinn</p>'
+        '<html><body><p>Restoran Elevant on Tallinna vanalinna s&uuml;dames '
+        'asuv restoran, mis pakub hooajalist menu&uuml;d kohalikest '
+        'toorainetest. Meie k&ouml;&ouml;k &uuml;hendab Eesti traditsioonid '
+        'kaasaegse tehnikaga. Avatud esmasp&auml;evast laup&auml;evani kella '
+        '12-st kuni 23-ni. Broneeri laud ette, eriti n&auml;dalavahetusel, '
+        'sest kohti on piiratud arv. Pakume ka privaatseid &uuml;ritusi ja '
+        'grupibroneeringuid kuni 40 inimesele. K&uuml;simuste korral v&otilde;tke meiega julgelt &uuml;hendust telefoni v&otilde;i e-posti teel.</p>'
         '<a href="/privaatsuspoliitika">Privaatsuspoliitika</a>'
         '<a href="/kontakt">Kontakt</a></body></html>', 200),
     "https://elevant.ee/privaatsuspoliitika": (
@@ -57,7 +63,13 @@ SITES = {
         '<html><body><a href="mailto:info@elevant.ee">info</a></body></html>', 200),
 
     "https://bonafide.fi": (
-        '<html><body><p>Bona Fide Helsinki</p>'
+        '<html><body><p>Bona Fide on helsinkil&auml;inen ravintola, joka '
+        'tarjoaa pohjoismaista ruokaa l&auml;hell&auml; tuotetuista raaka-'
+        'aineista. Keitti&ouml;mme vaihtaa menun neljä kertaa vuodessa '
+        'sesongin mukaan. Ravintola sijaitsee Iso Roobertinkadulla ja on '
+        'avoinna tiistaista lauantaihin. Otamme vastaan my&ouml;s '
+        'yksityistilaisuuksia ja ryhm&auml;varauksia. Suosittelemme '
+        'p&ouml;yd&auml;n varaamista etuk&auml;teen. Kysy lis&auml;&auml; tilaisuuksista my&ouml;s s&auml;hk&ouml;postitse tai puhelimitse.</p>'
         '<a href="/yhteystiedot">Yhteystiedot</a></body></html>', 200),
     "https://bonafide.fi/yhteystiedot": (
         '<html><body><p>Myyntip&auml;&auml;llikk&ouml; Liisa Koskinen, '

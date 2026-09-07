@@ -34,7 +34,11 @@ else
         -H "X-Goog-Api-Key: $GOOGLE_PLACES_API_KEY" \
         -H "X-Goog-FieldMask: places.id,places.displayName" \
         -d '{"textQuery":"Restaurant Aoi, Helsinki, Finland","maxResultCount":1}' 2>/dev/null)
+    reason=$(printf '%s' "$body" | tr -d '\n' | sed -n 's/.*"reason"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    message=$(printf '%s' "$body" | tr -d '\n' | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
     case "$body" in
+        *displayName*)
+            ok "Places API (New) answered" ;;
         *API_KEY_IP_ADDRESS_BLOCKED*)
             ip=""
             for svc in https://api.ipify.org https://ifconfig.me/ip https://icanhazip.com; do
@@ -46,14 +50,32 @@ else
                 printf '        Add this IPv4 to the key in the GCP console: \033[1m%s\033[0m\n' "$ip"
             else
                 printf '        Find this server IP with:  curl -4 ifconfig.me\n'
-                printf '        then add it to the key in the GCP console.\n'
             fi ;;
-        *SERVICE_DISABLED*|*PERMISSION_DENIED*)
-            bad "key rejected — is \"Places API (New)\" enabled for the project?" ;;
-        *API_KEY_INVALID*) bad "key is invalid" ;;
-        *displayName*)     ok "Places API (New) answered" ;;
-        *)                 bad "unexpected response: $(echo "$body" | head -c 200)" ;;
+        *API_KEY_SERVICE_BLOCKED*)
+            bad "the key exists but is not allowed to call this API."
+            printf '        In the GCP console, open the key and either choose\n'
+            printf '        "Do not restrict key" or add \033[1mPlaces API (New)\033[0m to its\n'
+            printf '        API restrictions. Note it is a separate entry from the\n'
+            printf '        legacy "Places API".\n' ;;
+        *SERVICE_DISABLED*)
+            bad "\"Places API (New)\" is not enabled on the project."
+            printf '        Enable it at: https://console.cloud.google.com/apis/library/places.googleapis.com\n' ;;
+        *API_KEY_INVALID*)
+            bad "Google does not recognise this key."
+            printf '        Likely one of:\n'
+            printf '          - the key was deleted, regenerated, or auto-disabled after being exposed\n'
+            printf '          - .env holds a truncated or mistyped value\n'
+            printf '        The key .env is currently sending (first/last 6 chars):\n'
+            printf '          \033[1m%s...%s\033[0m  (length %s)\n' \
+                "$(printf '%s' "$GOOGLE_PLACES_API_KEY" | cut -c1-6)" \
+                "$(printf '%s' "$GOOGLE_PLACES_API_KEY" | rev | cut -c1-6 | rev)" \
+                "$(printf '%s' "$GOOGLE_PLACES_API_KEY" | wc -c)"
+            printf '        A Google API key is normally 39 characters and starts AIzaSy.\n' ;;
+        *)
+            bad "unexpected response from Places API" ;;
     esac
+    [ -n "$reason" ]  && printf '        google reason:  %s\n' "$reason"
+    [ -n "$message" ] && printf '        google message: %s\n' "$message"
 fi
 
 echo "== browser =="

@@ -107,6 +107,43 @@ NAME_RE = re.compile(
     r"\b([A-ZÄÖÅÕÜŠŽ][a-zäöåõüšž]{1,20}(?:-[A-ZÄÖÅÕÜŠŽ][a-zäöåõüšž]{1,20})?"
     r"(?:\s+[A-ZÄÖÅÕÜŠŽ][a-zäöåõüšž]{1,20}){1,2})\b")
 
+# A capitalised run on a policy page is usually prose, not a person:
+# "Estonia This Privacy" reads as a name to a pattern that only checks
+# capitalisation. A candidate containing ANY of these is rejected outright.
+# Deliberately excludes words that are also real Finnish/Estonian surnames
+# (Salo, Nurmi, Koski, Tamm, Kask), which is why place names stop at the
+# handful that nobody is called.
+NON_NAME_TOKENS = {
+    # English function words
+    "this", "that", "these", "those", "the", "and", "or", "but", "for",
+    "with", "your", "our", "their", "its", "his", "her", "all", "any",
+    "each", "such", "more", "most", "read", "see", "here", "there", "please",
+    "we", "us", "you", "they", "is", "are", "was", "were", "be", "been",
+    "will", "can", "may", "must", "shall", "should", "would", "when",
+    "what", "which", "who", "whom", "how", "why", "from", "into", "about",
+    "also", "not", "only", "than", "then", "have", "has", "had", "does",
+    "do", "did", "if", "as", "at", "by", "on", "in", "of", "to",
+    # Policy, legal and site furniture
+    "privacy", "policy", "policies", "cookie", "cookies", "terms",
+    "conditions", "condition", "data", "protection", "notice", "statement",
+    "rights", "right", "use", "usage", "using", "service", "services",
+    "information", "personal", "processing", "controller", "processor",
+    "consent", "gdpr", "law", "legal", "purpose", "purposes", "period",
+    "storage", "security", "website", "site", "page", "content", "account",
+    "subject", "party", "parties", "third", "general", "regulation",
+    "tietosuoja", "tietosuojaseloste", "rekisteriseloste", "evasteet",
+    "kayttoehdot", "privaatsuspoliitika", "privaatsus", "andmekaitse",
+    "kupsised", "isikuandmete", "tootlemine",
+    # Countries and the few city names nobody is surnamed after
+    "finland", "estonia", "suomi", "eesti", "sweden", "ruotsi",
+    "helsinki", "tallinn", "tartu", "espoo", "vantaa", "tampere",
+    # Business furniture
+    "company", "ltd", "limited", "group", "team", "menu", "booking",
+    "bookings", "reservation", "reservations", "table", "online", "gift",
+    "card", "hotel", "opening", "hours", "address", "email", "phone",
+    "welcome", "home", "news", "blog", "shop", "order", "delivery",
+}
+
 # Words that look like names by shape but are not people.
 NOT_A_NAME = {
     "privacy policy", "cookie policy", "data controller", "restaurant manager",
@@ -298,7 +335,11 @@ def _looks_like_person(name: str) -> bool:
     if any(kw in flat for kw in ("policy", "oy", "ltd", "restaurant", "ravintola")):
         return False
     parts = name.split()
-    return 2 <= len(parts) <= 3 and all(len(p) >= 2 for p in parts)
+    if not (2 <= len(parts) <= 3 and all(len(p) >= 2 for p in parts)):
+        return False
+    # One prose word is enough to disqualify the whole candidate.
+    return not any(strip_diacritics(p).lower().strip(".,:;") in NON_NAME_TOKENS
+                   for p in parts)
 
 
 def attribute_person(text: str, email: str, offset: int | None = None

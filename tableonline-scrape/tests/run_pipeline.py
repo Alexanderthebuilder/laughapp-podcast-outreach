@@ -27,6 +27,13 @@ def run(db: str, registry_dir: Path) -> None:
         mod.PoliteClient = FakeClient
     p7.PoliteClient = FakeClient
 
+    # Playwright drives a real browser and does not go through PoliteClient,
+    # so tier 3 would reach the public internet and pull live pages into the
+    # fixtures. Stubbing it keeps the suite hermetic; where a site would have
+    # been rendered, the crawl falls through to the static tier as it does for
+    # any site the browser cannot help with.
+    p4.tier3 = lambda *a, **kw: 0
+
     p3.search_text = lambda client, key, query, country: (
         200, next((v for k, v in PLACES.items()
                    if _name_for(k).lower() in query.lower()), {"places": []}))
@@ -45,6 +52,7 @@ def run(db: str, registry_dir: Path) -> None:
 
     print("\n=== PHASE 4 crawl ===")
     p4.main(common + ["crawl"])
+    _assert_offline(db)
 
     print("\n=== PHASE 5 registry ===")
     p5.main(common + ["fi-load", "--file", str(registry_dir / "fi.json")])
@@ -61,6 +69,19 @@ def run(db: str, registry_dir: Path) -> None:
     p7.main(common + ["score"])
     p7.main(["--db", db, "push", "--dry-run"])
     p7.main(["--db", db, "export"])
+
+
+def _assert_offline(db: str) -> None:
+    """Guard the guard: if a site was rendered, the run was not hermetic."""
+    import sqlite3
+    conn = sqlite3.connect(db)
+    rendered = conn.execute(
+        "SELECT COUNT(*) FROM websites WHERE tier_used='tier3_render'").fetchone()[0]
+    conn.close()
+    if rendered:
+        raise AssertionError(
+            f"{rendered} site(s) went through tier 3 — the offline run reached "
+            "the real internet")
 
 
 _NAMES = {1528: "Restaurant Aoi", 92: "Elevant", 1204: "Bona Fide",
