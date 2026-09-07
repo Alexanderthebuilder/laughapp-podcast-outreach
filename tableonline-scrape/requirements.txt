@@ -1,0 +1,12 @@
+# HTTP + parsing
+httpx[http2]==0.28.1
+selectolax==0.3.27
+ijson==3.3.0
+python-dotenv==1.0.1
+
+# Rendering (Phase 1a-bis crosscheck, Phase 2 detail, Phase 4 Tier 3).
+# Imported lazily — phases that do not render run without it installed.
+playwright==1.49.1
+
+# Tests
+pytest==8.3.4
