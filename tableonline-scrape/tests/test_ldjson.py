@@ -67,3 +67,33 @@ def test_breadcrumb_listitems_are_ignored():
     crumbs = script({"@type": "BreadcrumbList", "itemListElement": [
         {"@type": "ListItem", "position": 1, "url": "/en/helsinki"}]})
     assert find_restaurant(crumbs + script(SUBJECT), 1000)["name"] == "Plein"
+
+
+def test_empty_stubs_sharing_the_subjects_id_do_not_win():
+    """The real page shape: six Review blocks, each nesting an empty Restaurant
+    stub that carries the *same* @id as the subject. Matching on @id alone
+    reaches a stub; the substance tiebreak is what reaches the real node."""
+    reviews = "".join(script({
+        "@type": "Review",
+        "itemReviewed": {"@type": "Restaurant", "@id": "/en/helsinki/plein/1000"},
+        "reviewRating": {"@type": "Rating", "ratingValue": "5"},
+        "author": {"@type": "Person", "name": f"Customer {i}"},
+        "reviewBody": "Lovely evening."}) for i in range(6))
+
+    got = extract(reviews + script(SUBJECT), 1000)
+    assert got["name"] == "Plein"
+    assert got["street_address"] == "Sturenkatu 27"
+    assert got["phone"] == "+358 40 123 4567"
+    assert got["review_score"] == 4.7
+
+
+def test_review_author_names_are_customers_not_staff():
+    """Person nodes inside Review blocks are diners. They must never reach the
+    contact table — a named contact has to be someone who works there."""
+    reviews = script({
+        "@type": "Review",
+        "itemReviewed": {"@type": "Restaurant", "@id": "/en/helsinki/plein/1000"},
+        "author": {"@type": "Person", "name": "Random Diner"}})
+    node = find_restaurant(reviews + script(SUBJECT), 1000)
+    assert node["name"] == "Plein"
+    assert "author" not in node
