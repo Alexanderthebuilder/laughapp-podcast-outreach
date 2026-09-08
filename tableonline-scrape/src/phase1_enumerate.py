@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from lib import consent
 from lib import tableonline as to
 from lib.cities import (city_label, country_for_slug, load_known_slugs,
                         record_slug)
@@ -31,6 +32,8 @@ from src._cli import base_parser, finish, open_db, subcommands
 
 PHASE = "phase1"
 DEFAULT_MAX_ID = 2500
+# Helsinki alone lists far more than this. Fewer means the page did not render.
+MIN_GROUND_TRUTH = 25
 
 
 # --------------------------------------------------------------------------
@@ -279,6 +282,25 @@ def _assign_tenure_buckets(conn) -> None:
 # --------------------------------------------------------------------------
 # crosscheck (Phase 1a-bis)
 # --------------------------------------------------------------------------
+def crosscheck_verdict(found: int, misses: list[int]) -> tuple[str, bool]:
+    """The verdict, kept separate so it can be tested without a browser.
+
+    An empty ground-truth set has no misses, so an earlier version reported
+    "ZERO MISSES" when the city pages had failed to render — a check that
+    cannot fail proves nothing. Too small a set is inconclusive, not a pass.
+    """
+    if found < MIN_GROUND_TRUTH:
+        return (f"INCONCLUSIVE — only {found} restaurants were scraped from the "
+                f"city pages (need at least {MIN_GROUND_TRUTH}). The listings "
+                "did not render, so nothing was verified. Check "
+                "raw/discovery/city-*.html.", False)
+    if misses:
+        return (f"{len(misses)} MISSES out of {found} — union the ID sweep with "
+                "a Playwright crawl of all city pages on tableonline_id", False)
+    return (f"ZERO MISSES out of {found} ground-truth restaurants — ID "
+            "enumeration alone is safe", True)
+
+
 def cmd_crosscheck(args) -> None:
     """Ground-truth the routing rule before building on it.
 
@@ -305,8 +327,18 @@ def cmd_crosscheck(args) -> None:
         for city in cities:
             url = f"{to.BASE}/en/{city}"
             try:
-                page.goto(url, wait_until="networkidle", timeout=60000)
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                consent.dismiss(page)
+                # Wait for the listings themselves, not for the network to go
+                # quiet: this page polls, so networkidle never settles.
+                try:
+                    page.wait_for_function(
+                        """() => document.querySelectorAll(
+                             'a[href*="/en/"]').length > 20""", timeout=25000)
+                except Exception:  # noqa: BLE001 — scroll anyway and see
+                    pass
                 _scroll_to_bottom(page)
+                consent.hide(page)
                 html = page.content()
             except Exception as exc:  # noqa: BLE001 — one bad city must not stop the check
                 record_failure(conn, PHASE, url, str(exc))
@@ -339,13 +371,10 @@ def cmd_crosscheck(args) -> None:
             if status != 200:
                 misses.append(tid)
 
-    verdict = ("ZERO MISSES — ID enumeration alone is safe"
-               if not misses else
-               f"{len(misses)} MISSES — union the ID sweep with a Playwright "
-               "crawl of all city pages on tableonline_id")
+    verdict, ok = crosscheck_verdict(len(found), misses)
     counts = {"ground_truth_ids": len(found), "misses": len(misses),
-              "miss_ids": misses[:50]}
-    finish_run(conn, run_id, True, counts, verdict)
+              "miss_ids": misses[:50], "conclusive": len(found) >= MIN_GROUND_TRUTH}
+    finish_run(conn, run_id, ok, counts, verdict)
 
     _append_crosscheck_doc(cities, found, misses, verdict)
     print(f"\n{verdict}")

@@ -71,6 +71,11 @@ FI_SEED_SLUGS = {
     "vierumaki", "himos", "pyha", "luosto", "iso-syote", "syote", "koli",
     "vuokatti", "sappee", "messila", "ounasvaara", "olos", "pallas",
     "harriniva", "nuuksio", "serena", "flamingo",
+    # Seen live in the sweep: municipalities, villages and resort areas
+    "vesilahti", "mantta", "manttavilppula", "iitti", "sirkka", "nauvo",
+    "kilpisjarvi", "napapiiri", "luoma", "tahkovuori", "mathildedal",
+    "raattama", "lemi", "ruotsinpyhtaa", "fiskars", "juva", "nilsia",
+    "vilppula", "pargas", "kimito", "tenala", "bromarv", "degerby",
     # Regions
     "lappi", "lapland", "uusimaa", "pirkanmaa", "varsinais-suomi",
     "pohjanmaa", "kainuu", "savo", "karjala", "hame", "satakunta",
