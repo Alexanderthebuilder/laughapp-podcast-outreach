@@ -29,7 +29,7 @@ from urllib.parse import urljoin, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib import cms_detect
+from lib import cms_detect, consent
 from lib.crawl import extract_links, harvest
 from lib.db import (add_contact, finish_run, insert_ignore, now,
                     record_failure, start_run, upsert)
@@ -209,11 +209,6 @@ def tier2(conn, client, rid: int, base: str, home_html: str, country: str | None
 # --------------------------------------------------------------------------
 # Tier 3 — Playwright
 # --------------------------------------------------------------------------
-CONSENT_SELECTORS = ("#onetrust-accept-btn-handler", ".cc-allow",
-                     "[id*='accept']", "[class*='accept']",
-                     "button:has-text('Hyväksy')", "button:has-text('Nõustu')")
-
-
 def tier3(conn, rid: int, base: str, country: str | None, counts: dict) -> int:
     """JS-only sites. EU consent overlays can hide footers in headless mode;
     we dismiss them where we can, but footer links are usually in the DOM
@@ -232,7 +227,7 @@ def tier3(conn, rid: int, base: str, country: str | None, counts: dict) -> int:
         page = ctx.new_page()
         try:
             page.goto(base, wait_until="networkidle", timeout=45000)
-            _dismiss_consent(page)
+            consent.dismiss(page)
             html = page.content()
             _record_page(conn, rid, base, "home", 200, html)
             _ingest(conn, rid, base, "home", html, country, counts)
@@ -245,7 +240,7 @@ def tier3(conn, rid: int, base: str, country: str | None, counts: dict) -> int:
                     continue
                 try:
                     page.goto(url, wait_until="networkidle", timeout=45000)
-                    _dismiss_consent(page)
+                    consent.dismiss(page)
                     sub = page.content()
                 except Exception as exc:  # noqa: BLE001 — skip the page, keep the site
                     record_failure(conn, PHASE, url, str(exc)[:300], rid)
@@ -258,18 +253,6 @@ def tier3(conn, rid: int, base: str, country: str | None, counts: dict) -> int:
         finally:
             browser.close()
     return pages
-
-
-def _dismiss_consent(page) -> None:
-    for sel in CONSENT_SELECTORS:
-        try:
-            el = page.query_selector(sel)
-            if el and el.is_visible():
-                el.click(timeout=2000)
-                page.wait_for_timeout(400)
-                return
-        except Exception:  # noqa: BLE001 — overlay handling is best-effort
-            continue
 
 
 # --------------------------------------------------------------------------
