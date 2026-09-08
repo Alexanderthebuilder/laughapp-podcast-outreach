@@ -143,8 +143,8 @@ def cmd_render(args) -> None:
                     continue
 
                 store_raw(RAW_PAGES / f"{tid}.rendered.html", html)
-                d = parse_detail(html)
-                geo = _geo(html)
+                d = parse_detail(html, tid)
+                geo = _geo(html, tid)
                 if "ld+json" in d["source"]:
                     counts["ld_json"] += 1
                 if d["street_address"]:
@@ -189,11 +189,12 @@ def cmd_render(args) -> None:
     finish(conn, args)
 
 
-def _geo(html: str) -> tuple[float | None, float | None]:
+def _geo(html: str, page_id: str | int | None = None
+         ) -> tuple[float | None, float | None]:
     """Coordinates from JSON-LD, which is what lets Phase 3 apply the 150 m
     proximity test instead of relying on name similarity alone."""
     from lib import ldjson
-    ld = ldjson.extract(html)
+    ld = ldjson.extract(html, page_id)
     try:
         return float(ld["lat"]), float(ld["lng"])
     except (KeyError, TypeError, ValueError):
@@ -262,8 +263,8 @@ def cmd_reparse(args) -> None:
             continue
         counts["files"] += 1
         raw_html = f.read_text(encoding="utf-8", errors="replace")
-        d = parse_detail(raw_html)
-        geo = _geo(raw_html)
+        d = parse_detail(raw_html, tid)
+        geo = _geo(raw_html, tid)
         upsert(conn, "restaurants", {"tableonline_id": tid}, {
             "lat": geo[0], "lng": geo[1],
             "street_address": d["street_address"], "postal_code": d["postal_code"],
@@ -312,6 +313,19 @@ def cmd_inspect(args) -> None:
         print("=" * 72)
 
         blocks = ldjson.blocks(html)
+        print(f"\n-- block map ({len(blocks)} blocks) --")
+        for i, block in enumerate(blocks):
+            for node in ldjson._walk(block):
+                if not isinstance(node, dict) or not node.get("@type"):
+                    continue
+                t = node.get("@type")
+                if isinstance(t, list):
+                    t = "/".join(str(x) for x in t)
+                if str(t).lower() in ("listitem", "breadcrumblist"):
+                    continue
+                keys = [k for k in node if not k.startswith("@")]
+                print(f"  [{i}] {t:16s} @id={str(node.get('@id') or '-')[:34]:34s}"
+                      f" keys={keys[:9]}")
         if getattr(args, "json_only", False):
             for i, block in enumerate(blocks):
                 text = _json.dumps(block, ensure_ascii=False, indent=2)

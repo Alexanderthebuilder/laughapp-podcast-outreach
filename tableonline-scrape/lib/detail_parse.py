@@ -101,8 +101,12 @@ def _split_tags(values: list[str]) -> tuple[list[str], list[str]]:
     return sorted(set(cuisine)), sorted(set(atmosphere))
 
 
-def parse_detail(html: str) -> dict:
-    """Everything Phase 2 wants from one rendered page."""
+def parse_detail(html: str, page_id: str | int | None = None) -> dict:
+    """Everything Phase 2 wants from one rendered page.
+
+    page_id lets the JSON-LD picker identify the node this page is about,
+    among the dozen blocks a detail page carries for other restaurants.
+    """
     text = strip_tags(html)
     out: dict = {
         "street_address": None, "postal_code": None, "city": None,
@@ -112,7 +116,7 @@ def parse_detail(html: str) -> dict:
         "source": [],
     }
 
-    ld = ldjson.extract(html)
+    ld = ldjson.extract(html, page_id)
     if ld:
         out["source"].append("ld+json")
         out["street_address"] = ld.get("street_address")

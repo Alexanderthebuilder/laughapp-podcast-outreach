@@ -55,16 +55,35 @@ def _types(node: dict) -> set[str]:
     return set()
 
 
-def find_restaurant(html: str) -> dict | None:
-    """The most specific business node in the page, or None.
+# Fields that make a node the real subject of the page rather than a passing
+# mention of another restaurant in a carousel.
+_SUBSTANCE_KEYS = ("address", "telephone", "aggregateRating", "geo",
+                   "servesCuisine", "priceRange", "openingHours",
+                   "openingHoursSpecification", "description", "menu")
 
-    Prefers a true Restaurant over a generic LocalBusiness or Organization,
-    since a page often carries both plus a WebSite node.
+_TYPE_RANK = {"restaurant": 0, "bar": 1, "barorpub": 1, "cafeorcoffeeshop": 1,
+              "foodestablishment": 2, "hotel": 3, "localbusiness": 4,
+              "place": 5, "organization": 6}
+
+
+def _substance(node: dict) -> int:
+    return sum(1 for k in _SUBSTANCE_KEYS if node.get(k))
+
+
+def find_restaurant(html: str, page_id: str | int | None = None) -> dict | None:
+    """The node this page is actually about, or None.
+
+    A detail page carries a dozen JSON-LD blocks — breadcrumbs, and ItemLists
+    of other restaurants, each a Restaurant node of its own. Taking the first
+    node of the best type picks whichever appears earliest, which is routinely
+    a stub or a neighbouring venue.
+
+    Selection, in order: a node whose @id matches this page, then the most
+    specific type, then the node carrying the most substance.
     """
-    best, best_rank = None, 99
-    rank = {"restaurant": 0, "bar": 1, "barorpub": 1, "cafeorcoffeeshop": 1,
-            "foodestablishment": 2, "hotel": 3, "localbusiness": 4,
-            "place": 5, "organization": 6}
+    best, best_key = None, None
+    wanted = str(page_id) if page_id is not None else None
+
     for payload in blocks(html):
         for node in _walk(payload):
             if not isinstance(node, dict):
@@ -72,15 +91,22 @@ def find_restaurant(html: str) -> dict | None:
             types = _types(node) & RESTAURANT_TYPES
             if not types:
                 continue
-            r = min(rank.get(t, 9) for t in types)
-            if r < best_rank:
-                best, best_rank = node, r
+            rank = min(_TYPE_RANK.get(t, 9) for t in types)
+            node_id = str(node.get("@id") or "")
+            # An @id ending in /{id} identifies the page's own subject.
+            id_match = bool(wanted) and (
+                node_id.rstrip("/").endswith("/" + wanted) or node_id == wanted)
+            # Sort key: id match first, then type, then substance (negated so
+            # that a smaller tuple is a better node).
+            key = (0 if id_match else 1, rank, -_substance(node))
+            if best_key is None or key < best_key:
+                best, best_key = node, key
     return best
 
 
-def extract(html: str) -> dict:
+def extract(html: str, page_id: str | int | None = None) -> dict:
     """Normalise a schema.org business node into our field names."""
-    node = find_restaurant(html)
+    node = find_restaurant(html, page_id)
     if not node:
         return {}
 
