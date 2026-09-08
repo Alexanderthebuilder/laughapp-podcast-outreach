@@ -132,9 +132,7 @@ def cmd_render(args) -> None:
                 url = row["tableonline_url"] or to.probe_url(tid)
                 counts["seen"] += 1
                 try:
-                    page.goto(url, wait_until="networkidle", timeout=45000)
-                    page.wait_for_timeout(RENDER_DELAY_MS)
-                    html = page.content()
+                    html = _render(page, url)
                 except Exception as exc:  # noqa: BLE001 — one bad page must not end the run
                     counts["errors"] += 1
                     record_failure(conn, PHASE, url, str(exc)[:400], tid)
@@ -201,6 +199,24 @@ def _geo(html: str) -> tuple[float | None, float | None]:
         return None, None
 
 
+def _render(page, url: str) -> str:
+    """Load a page and wait for the content we actually need.
+
+    networkidle never settles on a page that polls or holds a connection open,
+    so it burns the whole timeout and fails. Waiting for the JSON-LD block —
+    the thing the extractor wants — succeeds as soon as it is there, and falls
+    back to a fixed settle time when the page carries none.
+    """
+    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    try:
+        page.wait_for_selector('script[type="application/ld+json"]',
+                               state="attached", timeout=15000)
+        page.wait_for_timeout(400)
+    except Exception:  # noqa: BLE001 — no JSON-LD on this page; settle instead
+        page.wait_for_timeout(RENDER_DELAY_MS)
+    return page.content()
+
+
 def cmd_reparse(args) -> None:
     """Re-run parsing over the stored raw corpus without any network at all.
 
@@ -243,14 +259,83 @@ def cmd_reparse(args) -> None:
     finish(conn, args)
 
 
+def cmd_inspect(args) -> None:
+    """Show what the parser actually sees in a stored rendered page.
+
+    When the render pass reports JSON-LD present but no address or phone
+    extracted, the page shape differs from what the extractor expects. This
+    prints the evidence rather than requiring a guess.
+    """
+    import json as _json
+    import re as _re
+    from lib import ldjson
+    from lib.crawl import page_text
+
+    files = sorted(RAW_PAGES.glob("*.rendered.html"))
+    if args.id:
+        files = [f for f in files if f.name.split(".")[0] == str(args.id)]
+    if not files:
+        print("no rendered pages found — run `render` first", file=sys.stderr)
+        raise SystemExit(1)
+
+    for path in files[:args.show]:
+        html = path.read_text(encoding="utf-8", errors="replace")
+        print("=" * 72)
+        print(f"{path.name}   ({len(html)} bytes html, "
+              f"{len(page_text(html))} chars text)")
+        print("=" * 72)
+
+        blocks = ldjson.blocks(html)
+        print(f"\n-- JSON-LD blocks: {len(blocks)} --")
+        for i, block in enumerate(blocks):
+            text = _json.dumps(block, ensure_ascii=False, indent=2)
+            print(f"\n[block {i}] {len(text)} chars")
+            print(text[:args.chars])
+            if len(text) > args.chars:
+                print(f"... (+{len(text) - args.chars} chars)")
+
+        node = ldjson.find_restaurant(html)
+        print(f"\n-- node chosen by find_restaurant: "
+              f"{(node or {}).get('@type')!r} --")
+        print(_json.dumps(ldjson.extract(html), ensure_ascii=False, indent=2))
+
+        print("\n-- tel: hrefs --")
+        print(_re.findall(r'href=["\']tel:([^"\']+)', html)[:10] or "none")
+
+        print("\n-- map links --")
+        print(_re.findall(r'href=["\'](https?://[^"\']*(?:google[^"\']*maps|maps\.google)[^"\']*)',
+                          html)[:5] or "none")
+
+        print("\n-- elements whose class or id mentions address/phone/contact --")
+        hits = _re.findall(
+            r'<([a-z]+)[^>]*(?:class|id)=["\']([^"\']*(?:address|osoite|aadress|'
+            r'phone|puhelin|telefon|contact|yhteys|kontakt|location|sijainti)'
+            r'[^"\']*)["\'][^>]*>(.{0,120})', html, _re.IGNORECASE | _re.DOTALL)
+        for tag, cls, body in hits[:12]:
+            body = _re.sub(r"\s+", " ", _re.sub(r"<[^>]+>", " ", body)).strip()
+            print(f"  <{tag} ...{cls[:44]}> {body[:80]}")
+        if not hits:
+            print("  none")
+
+        print("\n-- first 600 chars of visible text --")
+        print(page_text(html)[:600])
+        print()
+
+
 def main(argv=None) -> None:
     p = base_parser(__doc__)
     sub = subcommands(p)
     sub.add_parser("http", help="parse server-injected meta tags (no browser)")
     sub.add_parser("render", help="Playwright pass for JS-only fields")
     sub.add_parser("reparse", help="re-parse the stored raw corpus, no network")
+    ins = sub.add_parser("inspect", help="show what the parser sees in a page")
+    ins.add_argument("--id", type=int, help="one tableonline_id")
+    ins.add_argument("--show", type=int, default=1, help="how many pages")
+    ins.add_argument("--chars", type=int, default=2500,
+                     help="max chars per JSON-LD block")
     args = p.parse_args(argv)
-    {"http": cmd_http, "render": cmd_render, "reparse": cmd_reparse}[args.cmd](args)
+    {"http": cmd_http, "render": cmd_render, "reparse": cmd_reparse,
+     "inspect": cmd_inspect}[args.cmd](args)
 
 
 if __name__ == "__main__":
