@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib import tableonline as to
+from lib import consent
 from lib.cities import city_label
 from lib.db import finish_run, now, record_failure, start_run, upsert
 from lib.detail_parse import parse_detail
@@ -199,21 +200,46 @@ def _geo(html: str) -> tuple[float | None, float | None]:
         return None, None
 
 
-def _render(page, url: str) -> str:
-    """Load a page and wait for the content we actually need.
+# True once a JSON-LD node carries a name and either an address or a phone.
+# Waiting for the <script> tag alone is not enough: the site ships an empty
+# Restaurant stub server-side and populates it later, so the tag exists from
+# the first byte and a wait on it returns before any content arrives.
+_LD_POPULATED = """() => {
+  const els = document.querySelectorAll('script[type="application/ld+json"]');
+  for (const el of els) {
+    let data;
+    try { data = JSON.parse(el.textContent || 'null'); } catch (e) { continue; }
+    if (!data) continue;
+    const stack = [data];
+    while (stack.length) {
+      const node = stack.pop();
+      if (Array.isArray(node)) { stack.push(...node); continue; }
+      if (!node || typeof node !== 'object') continue;
+      if (node.name && (node.address || node.telephone)) return true;
+      for (const v of Object.values(node)) {
+        if (v && typeof v === 'object') stack.push(v);
+      }
+    }
+  }
+  return false;
+}"""
 
-    networkidle never settles on a page that polls or holds a connection open,
-    so it burns the whole timeout and fails. Waiting for the JSON-LD block —
-    the thing the extractor wants — succeeds as soon as it is there, and falls
-    back to a fixed settle time when the page carries none.
+
+def _render(page, url: str) -> str:
+    """Load a page, clear the consent overlay, and wait for real content.
+
+    Every page opens behind a cookie banner. Left up, it is the only text in
+    the snapshot and can hold back what renders underneath, which is why an
+    earlier run found JSON-LD on every page and nothing inside any of it.
     """
     page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    consent.dismiss(page)
     try:
-        page.wait_for_selector('script[type="application/ld+json"]',
-                               state="attached", timeout=15000)
-        page.wait_for_timeout(400)
-    except Exception:  # noqa: BLE001 — no JSON-LD on this page; settle instead
-        page.wait_for_timeout(RENDER_DELAY_MS)
+        page.wait_for_function(_LD_POPULATED, timeout=20000)
+        page.wait_for_timeout(300)
+    except Exception:  # noqa: BLE001 — no populated JSON-LD; settle and take
+        page.wait_for_timeout(RENDER_DELAY_MS)                # what is there
+    consent.hide(page)
     return page.content()
 
 
@@ -286,6 +312,12 @@ def cmd_inspect(args) -> None:
         print("=" * 72)
 
         blocks = ldjson.blocks(html)
+        if getattr(args, "json_only", False):
+            for i, block in enumerate(blocks):
+                text = _json.dumps(block, ensure_ascii=False, indent=2)
+                print(f"\n[block {i}] {len(text)} chars")
+                print(text[:args.chars])
+            continue
         print(f"\n-- JSON-LD blocks: {len(blocks)} --")
         for i, block in enumerate(blocks):
             text = _json.dumps(block, ensure_ascii=False, indent=2)
@@ -333,6 +365,8 @@ def main(argv=None) -> None:
     ins.add_argument("--show", type=int, default=1, help="how many pages")
     ins.add_argument("--chars", type=int, default=2500,
                      help="max chars per JSON-LD block")
+    ins.add_argument("--json-only", action="store_true",
+                     help="print only the JSON-LD blocks")
     args = p.parse_args(argv)
     {"http": cmd_http, "render": cmd_render, "reparse": cmd_reparse,
      "inspect": cmd_inspect}[args.cmd](args)
