@@ -26,7 +26,7 @@ from lib.cities import country_for_slug, load_known_slugs, record_slug
 from lib.db import finish_run, now, record_failure, start_run, upsert
 from lib.http import PoliteClient, store_raw
 from lib.paths import DOCS, RAW_PAGES
-from src._cli import base_parser, finish, open_db
+from src._cli import base_parser, finish, open_db, subcommands
 
 PHASE = "phase1"
 DEFAULT_MAX_ID = 2500
@@ -462,7 +462,7 @@ def cmd_coverage(args) -> None:
 
 def main(argv=None) -> None:
     p = base_parser(__doc__)
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = subcommands(p)
     sub.add_parser("discover", help="robots/sitemap/city selector/API discovery")
     s = sub.add_parser("sweep", help="ID sweep against /en/x/x/{id}")
     s.add_argument("--start", type=int, default=1)

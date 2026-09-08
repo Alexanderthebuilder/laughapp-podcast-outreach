@@ -81,8 +81,9 @@ is the expected result of `tmux new`, not an error.
 This is the path to `exports/tableonline_contacts.xlsx`. Phase 7 (Pipedrive) is
 not part of it.
 
-Every phase takes `--limit` and `--resume`. **Prove each one with `--limit 20`
-before running it full-scale**, and read `run_report.md` between phases.
+Every phase takes `--limit` and `--resume`, on either side of the subcommand.
+**Prove each one with `--limit 20` before running it full-scale**, and read
+`run_report.md` between phases.
 
 ```bash
 # Step 1 — is the shortcut safe?  Run this BEFORE the sweep.

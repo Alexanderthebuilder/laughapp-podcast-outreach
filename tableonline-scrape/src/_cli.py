@@ -37,6 +37,40 @@ def base_parser(description: str) -> argparse.ArgumentParser:
     return p
 
 
+def common_parent() -> argparse.ArgumentParser:
+    """The shared flags again, for attaching to each subcommand.
+
+    Defined only on the top-level parser, argparse accepts them solely *before*
+    the subcommand, so the natural `sweep --limit 20` is rejected. Repeating
+    them on every subparser makes both orders work. The defaults are SUPPRESS
+    so an unused subcommand flag does not overwrite a value given at the top
+    level — with a real default it would silently reset it.
+    """
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument("--db", default=argparse.SUPPRESS, help="SQLite path")
+    p.add_argument("--limit", type=int, default=argparse.SUPPRESS,
+                   help="stop after N rows")
+    p.add_argument("--resume", action="store_true", default=argparse.SUPPRESS,
+                   help="skip rows this phase has already completed")
+    p.add_argument("--no-report", action="store_true", default=argparse.SUPPRESS,
+                   help="skip regenerating run_report.md")
+    return p
+
+
+def subcommands(parser: argparse.ArgumentParser):
+    """Subparser factory that attaches the shared flags to every subcommand."""
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    original = sub.add_parser
+
+    def add_parser(name, **kw):
+        kw.setdefault("parents", [])
+        kw["parents"] = list(kw["parents"]) + [common_parent()]
+        return original(name, **kw)
+
+    sub.add_parser = add_parser
+    return sub
+
+
 def open_db(args) -> sqlite3.Connection:
     ensure_dirs()
     load_env()

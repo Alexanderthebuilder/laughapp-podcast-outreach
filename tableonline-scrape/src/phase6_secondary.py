@@ -32,7 +32,7 @@ from lib.db import (add_contact, finish_run, insert_ignore, now,
 from lib.emails import is_generic_mailbox
 from lib.http import PoliteClient
 from lib.patterns import ordered_candidates
-from src._cli import base_parser, finish, open_db
+from src._cli import base_parser, finish, open_db, subcommands
 
 PHASE = "phase6"
 
@@ -315,7 +315,7 @@ def cmd_jobads(args) -> None:
 
 def main(argv=None) -> None:
     p = base_parser(__doc__)
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = subcommands(p)
     sub.add_parser("patterns", help="generate candidate addresses from names")
     sub.add_parser("verify", help="verify addresses with the configured provider")
     sub.add_parser("whois", help="domain registrant names")

@@ -25,7 +25,7 @@ from lib.db import finish_run, now, record_failure, start_run, upsert
 from lib.emails import is_generic_mailbox
 from lib.http import PoliteClient
 from lib.paths import EXPORTS
-from src._cli import base_parser, finish, open_db
+from src._cli import base_parser, finish, open_db, subcommands
 
 PHASE = "phase7"
 LABEL = "TableOnline Attack List"
@@ -405,7 +405,7 @@ def cmd_export(args) -> None:
 
 def main(argv=None) -> None:
     p = base_parser(__doc__)
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = subcommands(p)
     sub.add_parser("score", help="compute the priority score")
     sub.add_parser("setup", help="resolve/create Pipedrive custom fields")
     pu = sub.add_parser("push", help="upsert organizations and persons")

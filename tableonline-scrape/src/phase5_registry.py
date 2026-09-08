@@ -30,7 +30,7 @@ from lib.http import PoliteClient
 from lib.normalise import (addresses_agree, name_similarity, normalise_name,
                            normalise_postcode, parse_street)
 from lib.paths import RAW_REGISTRY
-from src._cli import base_parser, finish, open_db
+from src._cli import base_parser, finish, open_db, subcommands
 
 PHASE = "phase5"
 NAME_ACCEPT = 0.9          # fallback name match must be strong
@@ -413,7 +413,7 @@ def cmd_groups(args) -> None:
 
 def main(argv=None) -> None:
     p = base_parser(__doc__)
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = subcommands(p)
     sub.add_parser("fi-download", help="download the PRH bulk dump")
     fl = sub.add_parser("fi-load", help="stream the dump into companies_fi")
     fl.add_argument("--file", help="path to the zip or decompressed JSON")

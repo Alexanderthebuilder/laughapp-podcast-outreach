@@ -29,7 +29,7 @@ from lib.http import PoliteClient, store_raw
 from lib.normalise import (addresses_agree, haversine_m, name_similarity,
                            parse_street)
 from lib.paths import RAW_PLACES
-from src._cli import base_parser, finish, open_db
+from src._cli import base_parser, finish, open_db, subcommands
 
 PHASE = "phase3"
 ENDPOINT = "https://places.googleapis.com/v1/places:searchText"
@@ -278,7 +278,7 @@ def cmd_seed_websites(args) -> None:
 
 def main(argv=None) -> None:
     p = base_parser(__doc__)
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = subcommands(p)
     sub.add_parser("match", help="searchText against Places API (New)")
     sub.add_parser("seed-websites", help="feed accepted websites into Phase 4")
     args = p.parse_args(argv)

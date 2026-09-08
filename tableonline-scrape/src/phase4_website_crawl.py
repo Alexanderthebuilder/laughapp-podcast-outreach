@@ -37,7 +37,7 @@ from lib.http import PoliteClient, store_raw
 from lib.normalise import slugify
 from lib.pagekind import PAGE_KINDS, classify, rank_links
 from lib.paths import RAW_WEBSITES
-from src._cli import base_parser, finish, open_db
+from src._cli import base_parser, finish, open_db, subcommands
 
 PHASE = "phase4"
 MAX_PAGES = 15
@@ -415,7 +415,7 @@ def cmd_reparse(args) -> None:
 
 def main(argv=None) -> None:
     p = base_parser(__doc__)
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = subcommands(p)
     c = sub.add_parser("crawl", help="crawl restaurant websites")
     c.add_argument("--tier", choices=["auto", "1", "2", "3"], default="auto",
                    help="force a tier instead of choosing per site")

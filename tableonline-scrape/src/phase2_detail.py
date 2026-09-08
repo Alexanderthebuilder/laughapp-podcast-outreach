@@ -25,7 +25,7 @@ from lib.db import finish_run, now, record_failure, start_run, upsert
 from lib.detail_parse import parse_detail
 from lib.http import PoliteClient, store_raw
 from lib.paths import RAW_PAGES
-from src._cli import base_parser, finish, open_db
+from src._cli import base_parser, finish, open_db, subcommands
 
 PHASE = "phase2"
 RENDER_DELAY_MS = 1500
@@ -245,7 +245,7 @@ def cmd_reparse(args) -> None:
 
 def main(argv=None) -> None:
     p = base_parser(__doc__)
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = subcommands(p)
     sub.add_parser("http", help="parse server-injected meta tags (no browser)")
     sub.add_parser("render", help="Playwright pass for JS-only fields")
     sub.add_parser("reparse", help="re-parse the stored raw corpus, no network")
