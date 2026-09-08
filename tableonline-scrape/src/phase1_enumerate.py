@@ -32,8 +32,16 @@ from src._cli import base_parser, finish, open_db, subcommands
 
 PHASE = "phase1"
 DEFAULT_MAX_ID = 2500
-# Helsinki alone lists far more than this. Fewer means the page did not render.
+# Fewer than this means the listing pages did not render at all.
 MIN_GROUND_TRUTH = 25
+
+# The listing pages paginate, so one city yields only its first screen —
+# roughly 20 restaurants. Breadth across cities is a cheaper way to a
+# meaningful ground-truth set than defeating the pagination.
+DEFAULT_CROSSCHECK_CITIES = (
+    "helsinki", "tallinn", "tampere", "turku", "espoo", "vantaa", "oulu",
+    "tartu", "jyvaskyla", "lahti", "parnu", "kuopio", "porvoo", "rovaniemi",
+)
 
 
 # --------------------------------------------------------------------------
@@ -309,7 +317,7 @@ def cmd_crosscheck(args) -> None:
     """
     conn = open_db(args)
     run_id = start_run(conn, f"{PHASE}.crosscheck")
-    cities = args.cities.split(",") if args.cities else ["helsinki", "tallinn"]
+    cities = args.cities.split(",") if args.cities else list(DEFAULT_CROSSCHECK_CITIES)
 
     try:
         from playwright.sync_api import sync_playwright
@@ -582,7 +590,9 @@ def main(argv=None) -> None:
     s.add_argument("--start", type=int, default=1)
     s.add_argument("--end", type=int, default=DEFAULT_MAX_ID)
     c = sub.add_parser("crosscheck", help="Phase 1a-bis slug-independence check")
-    c.add_argument("--cities", default="helsinki,tallinn")
+    c.add_argument("--cities",
+                   default=",".join(DEFAULT_CROSSCHECK_CITIES),
+                   help="comma-separated city slugs to use as ground truth")
     cv = sub.add_parser("coverage", help="Phase 1c coverage check")
     cv.add_argument("--sample", type=int, default=50)
     sub.add_parser("slugs", help="list city slugs and which are unmapped")
