@@ -22,7 +22,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib import tableonline as to
-from lib.cities import country_for_slug, load_known_slugs, record_slug
+from lib.cities import (city_label, country_for_slug, load_known_slugs,
+                        record_slug)
 from lib.db import finish_run, now, record_failure, start_run, upsert
 from lib.http import PoliteClient, store_raw
 from lib.paths import DOCS, RAW_PAGES
@@ -460,6 +461,90 @@ def cmd_coverage(args) -> None:
     finish(conn, args)
 
 
+# --------------------------------------------------------------------------
+# slugs / recountry — fixing the country mapping without re-sweeping
+# --------------------------------------------------------------------------
+def cmd_slugs(args) -> None:
+    """Every city slug seen, with its assigned country and a sample URL.
+
+    An unmapped slug leaves country NULL by design rather than defaulting to
+    FI. This is how you see which ones still need adding to lib/cities.py.
+    """
+    conn = open_db(args)
+    known = load_known_slugs(conn)
+    rows = conn.execute(
+        "SELECT city_slug, COUNT(*) n, MIN(tableonline_url) url,"
+        " MIN(name) sample FROM restaurants GROUP BY city_slug"
+        " ORDER BY n DESC").fetchall()
+
+    mapped, unmapped = [], []
+    for r in rows:
+        country, source = country_for_slug(r["city_slug"], known)
+        (unmapped if country is None else mapped).append((r, country, source))
+
+    print(f"{len(mapped)} mapped slugs, {len(unmapped)} unmapped\n")
+    print(f"{'slug':32s} {'n':>4s}  country  source")
+    print("-" * 70)
+    for r, country, source in mapped:
+        print(f"{(r['city_slug'] or ''):32s} {r['n']:>4d}  {country:7s}  {source}")
+
+    if unmapped:
+        print("\nUNMAPPED — country left NULL, not defaulted:")
+        print("-" * 70)
+        for r, _c, _s in unmapped:
+            print(f"{(r['city_slug'] or '?'):32s} {r['n']:>4d}  e.g. {r['sample']}")
+            print(f"{'':32s}       {r['url']}")
+        print("\nAdd these to EE_SLUGS or FI_SEED_SLUGS in lib/cities.py, then:")
+        print("  python -m src.phase1_enumerate recountry")
+    finish(conn, args)
+
+
+def cmd_recountry(args) -> None:
+    """Re-apply the city-slug country mapping to rows already collected.
+
+    Needed after lib/cities.py gains a slug: the sweep costs 40 minutes and
+    the mapping is pure local logic, so it is re-derived rather than re-fetched.
+    """
+    conn = open_db(args)
+    run_id = start_run(conn, f"{PHASE}.recountry")
+    known = load_known_slugs(conn)
+    counts = {"checked": 0, "assigned": 0, "changed": 0, "still_unmapped": 0}
+
+    for row in conn.execute(
+            "SELECT tableonline_id, city_slug, country, needs_review,"
+            " review_reason FROM restaurants").fetchall():
+        counts["checked"] += 1
+        country, _source = country_for_slug(row["city_slug"], known)
+        if country is None:
+            counts["still_unmapped"] += 1
+            continue
+        if row["country"] == country:
+            continue
+
+        # Drop only the unmapped-slug note; an image-ID mismatch is a separate
+        # reason and must survive.
+        reason = row["review_reason"] or ""
+        kept = [part.strip() for part in reason.split(";")
+                if part.strip() and "unmapped city slug" not in part]
+        new_reason = "; ".join(kept) or None
+        conn.execute(
+            "UPDATE restaurants SET country=?, city=?, needs_review=?,"
+            " review_reason=? WHERE tableonline_id=?",
+            (country, city_label(row["city_slug"]), 1 if kept else 0,
+             new_reason, row["tableonline_id"]))
+        counts["assigned"] += 1
+        if row["country"]:
+            counts["changed"] += 1
+    conn.commit()
+
+    finish_run(conn, run_id, True, counts)
+    print(json.dumps(counts, indent=2))
+    if counts["still_unmapped"]:
+        print(f"\n{counts['still_unmapped']} rows still have no country — run "
+              "`slugs` to see which and add them to lib/cities.py")
+    finish(conn, args)
+
+
 def main(argv=None) -> None:
     p = base_parser(__doc__)
     sub = subcommands(p)
@@ -471,9 +556,12 @@ def main(argv=None) -> None:
     c.add_argument("--cities", default="helsinki,tallinn")
     cv = sub.add_parser("coverage", help="Phase 1c coverage check")
     cv.add_argument("--sample", type=int, default=50)
+    sub.add_parser("slugs", help="list city slugs and which are unmapped")
+    sub.add_parser("recountry", help="re-apply the country mapping, no network")
     args = p.parse_args(argv)
     {"discover": cmd_discover, "sweep": cmd_sweep,
-     "crosscheck": cmd_crosscheck, "coverage": cmd_coverage}[args.cmd](args)
+     "crosscheck": cmd_crosscheck, "coverage": cmd_coverage,
+     "slugs": cmd_slugs, "recountry": cmd_recountry}[args.cmd](args)
 
 
 if __name__ == "__main__":

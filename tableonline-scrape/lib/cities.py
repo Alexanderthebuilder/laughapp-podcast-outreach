@@ -17,21 +17,76 @@ from .normalise import strip_diacritics
 # but see resolve(): "everything else -> FI" only applies to slugs we have
 # actually seen in the site's city selector.
 EE_SLUGS = {
-    "tallinn", "tartu", "parnu", "parnu-linn", "narva", "haapsalu",
-    "kuressaare", "viljandi", "rakvere", "pohja-eesti", "harjumaa",
-    "pohja-tallinn", "pirita", "kadriorg", "pohjala",
+    # Cities and towns
+    "tallinn", "tartu", "parnu", "narva", "haapsalu", "kuressaare",
+    "viljandi", "rakvere", "otepaa", "johvi", "sillamae", "valga", "voru",
+    "polva", "rapla", "paide", "keila", "maardu", "kohtla-jarve", "tapa",
+    "elva", "kardla", "jogeva", "turi", "kunda", "loksa", "narva-joesuu",
+    "toila", "kuremaa", "pold",
+    # Islands, regions and areas
+    "saaremaa", "hiiumaa", "muhu", "harjumaa", "laanemaa", "ida-virumaa",
+    "laane-virumaa", "tartumaa", "parnumaa", "viljandimaa", "raplamaa",
+    "jarvamaa", "jogevamaa", "polvamaa", "valgamaa", "vorumaa",
+    "pohja-eesti", "louna-eesti", "laane-eesti",
+    # Tallinn districts and nearby municipalities
+    "pohja-tallinn", "pirita", "kadriorg", "vanalinn", "kesklinn", "kalamaja",
+    "nomme", "haabersti", "lasnamae", "mustamae", "viimsi", "harku", "saue",
+    "kiili", "rae", "joelahtme", "laulasmaa", "padise", "muuga", "peetri",
+    "estonia", "eesti",
 }
 
 FI_SEED_SLUGS = {
-    "helsinki", "espoo", "vantaa", "tampere", "turku", "oulu", "jyvaskyla",
-    "lahti", "kuopio", "pori", "joensuu", "lappeenranta", "vaasa", "rovaniemi",
-    "seinajoki", "kotka", "hameenlinna", "mikkeli", "kokkola", "porvoo",
-    "hyvinkaa", "nurmijarvi", "jarvenpaa", "kirkkonummi", "kerava", "tuusula",
-    "naantali", "salo", "raisio", "kaarina", "imatra", "kouvola", "savonlinna",
-    "levi", "yllas", "ruka", "saariselka", "tahko", "vierumaki", "nuuksio",
-    "sipoo", "siuntio", "inkoo", "hanko", "raasepori", "lohja", "vihti",
+    # Capital region
+    "helsinki", "espoo", "vantaa", "kauniainen",
+    # Largest cities
+    "tampere", "turku", "oulu", "jyvaskyla", "lahti", "kuopio", "pori",
+    "joensuu", "lappeenranta", "vaasa", "rovaniemi", "seinajoki", "kotka",
+    "hameenlinna", "mikkeli", "kokkola", "porvoo", "hyvinkaa", "lohja",
+    "jarvenpaa", "rauma", "kajaani", "kerava", "savonlinna", "nokia",
+    "kouvola", "imatra", "riihimaki", "salo", "raisio", "kaarina", "naantali",
+    "varkaus", "iisalmi", "raahe", "tornio", "kemi", "pietarsaari",
+    "valkeakoski", "heinola", "forssa", "kuusamo", "kurikka", "kauhava",
+    "ylojarvi", "kangasala", "pirkkala", "lempaala", "akaa", "sastamala",
+    "ikaalinen", "virrat", "orivesi", "jamsa", "aanekoski", "laukaa",
+    "muurame", "keuruu", "saarijarvi", "viitasaari", "siilinjarvi", "kuhmo",
+    "sotkamo", "nurmes", "lieksa", "kitee", "outokumpu", "kontiolahti",
+    "liperi", "ilomantsi", "pieksamaki", "hollola", "orimattila", "asikkala",
+    "nastola", "hamina", "loviisa", "kirkkonummi", "nurmijarvi", "tuusula",
+    "sipoo", "siuntio", "inkoo", "hanko", "raasepori", "vihti", "mantsala",
+    "pornainen", "askola", "pukkila", "myrskyla", "lapinjarvi",
+    "uusikaupunki", "laitila", "mynamaki", "masku", "nousiainen", "rusko",
+    "lieto", "paimio", "sauvo", "kemionsaari", "parainen", "somero",
+    "poytya", "aura", "loimaa", "huittinen", "kokemaki", "harjavalta",
+    "nakkila", "ulvila", "eura", "sakyla", "eurajoki", "merikarvia",
+    "kankaanpaa", "parkano", "kalajoki", "ylivieska", "nivala", "haapajarvi",
+    "oulainen", "kempele", "liminka", "muhos", "ii", "pudasjarvi", "kemijarvi",
+    "sodankyla", "inari", "ivalo", "utsjoki", "enontekio", "muonio", "kolari",
+    "kittila", "pello", "ylitornio", "keminmaa", "ranua", "posio", "salla",
+    "lapua", "alajarvi", "alavus", "kuortane", "ahtari", "ilmajoki",
+    "kauhajoki", "teuva", "kristiinankaupunki", "narpio", "maalahti",
+    "mustasaari", "laihia", "uusikaarlepyy", "kruunupyy", "kannus",
+    "kaustinen", "mariehamn", "maarianhamina", "ahvenanmaa", "aland",
+    # Ski resorts and holiday areas — common on a booking site
+    "levi", "yllas", "akaslompolo", "ruka", "saariselka", "tahko",
+    "vierumaki", "himos", "pyha", "luosto", "iso-syote", "syote", "koli",
+    "vuokatti", "sappee", "messila", "ounasvaara", "olos", "pallas",
+    "harriniva", "nuuksio", "serena", "flamingo",
+    # Regions
+    "lappi", "lapland", "uusimaa", "pirkanmaa", "varsinais-suomi",
+    "pohjanmaa", "kainuu", "savo", "karjala", "hame", "satakunta",
+    "kymenlaakso", "keski-suomi", "pohjois-karjala", "etela-savo",
+    "pohjois-savo", "etela-karjala", "paijat-hame", "kanta-hame",
+    "pohjois-pohjanmaa", "etela-pohjanmaa", "keski-pohjanmaa", "suomi",
+    "finland",
+    # Helsinki districts, in case the site segments by neighbourhood
+    "kallio", "punavuori", "kamppi", "kruununhaka", "toolo", "etu-toolo",
+    "taka-toolo", "eira", "ullanlinna", "katajanokka", "hakaniemi",
+    "sornainen", "vallila", "arabianranta", "herttoniemi", "kulosaari",
+    "lauttasaari", "munkkiniemi", "pasila", "ruoholahti", "jatkasaari",
+    "kaartinkaupunki", "kaisaniemi", "kluuvi", "keskusta", "kamppi-punavuori",
+    "helsinki-keskusta", "tapiola", "leppavaara", "matinkyla", "otaniemi",
+    "espoonlahti", "myyrmaki", "tikkurila", "aviapolis",
 }
-
 
 def canonical_slug(slug: str | None) -> str:
     return strip_diacritics((slug or "").strip().lower()).replace("_", "-")
