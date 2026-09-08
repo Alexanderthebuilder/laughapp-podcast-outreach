@@ -35,7 +35,7 @@ echo "== Google Places (New) =="
 if [ -z "${GOOGLE_PLACES_API_KEY:-}" ]; then
     bad "GOOGLE_PLACES_API_KEY not set in .env"
 else
-    body=$(curl -sS -m 30 -X POST "https://places.googleapis.com/v1/places:searchText" \
+    body=$(curl -4 -sS -m 30 -X POST "https://places.googleapis.com/v1/places:searchText" \
         -H "Content-Type: application/json" \
         -H "X-Goog-Api-Key: $GOOGLE_PLACES_API_KEY" \
         -H "X-Goog-FieldMask: places.id,places.displayName" \
@@ -46,17 +46,27 @@ else
         *displayName*)
             ok "Places API (New) answered" ;;
         *API_KEY_IP_ADDRESS_BLOCKED*)
-            ip=""
-            for svc in https://api.ipify.org https://ifconfig.me/ip https://icanhazip.com; do
-                ip=$(curl -4 -sS -m 10 "$svc" 2>/dev/null | tr -d '[:space:]')
-                [ -n "$ip" ] && break
-            done
             bad "key is IP-restricted and this server is not allowed."
-            if [ -n "$ip" ]; then
-                printf '        Add this IPv4 to the key in the GCP console: \033[1m%s\033[0m\n' "$ip"
-            else
-                printf '        Find this server IP with:  curl -4 ifconfig.me\n'
-            fi ;;
+            # Google names the address it actually saw. Trust that over a
+            # local lookup: a host with both A and AAAA records may leave over
+            # IPv6, and whitelisting the IPv4 then fixes nothing.
+            seen=$(printf '%s' "$body" | tr -d '\n' \
+                | sed -n 's/.*originating IP address of the call (\([^)]*\)).*/\1/p')
+            v4=""; v6=""
+            for svc in https://api.ipify.org https://ifconfig.me/ip; do
+                v4=$(curl -4 -sS -m 10 "$svc" 2>/dev/null | tr -d '[:space:]')
+                [ -n "$v4" ] && break
+            done
+            v6=$(curl -6 -sS -m 10 https://api64.ipify.org 2>/dev/null | tr -d '[:space:]')
+            printf '        Add these to the key in the GCP console:\n'
+            [ -n "$seen" ] && printf '          \033[1m%s\033[0m   (the address Google saw)\n' "$seen"
+            [ -n "$v4" ]   && printf '          \033[1m%s\033[0m   (this server IPv4)\n' "$v4"
+            [ -n "$v6" ] && [ "$v6" != "$seen" ] && \
+                printf '          \033[1m%s\033[0m   (this server IPv6)\n' "$v6"
+            case "$seen" in
+                *:*) printf '        That is an IPv6 address — the call left over IPv6.\n'
+                     printf '        Phase 3 forces IPv4, but add both to be safe.\n' ;;
+            esac ;;
         *API_KEY_SERVICE_BLOCKED*)
             bad "the key exists but is not allowed to call this API."
             printf '        In the GCP console, open the key and either choose\n'

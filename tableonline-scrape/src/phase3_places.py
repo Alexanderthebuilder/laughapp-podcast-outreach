@@ -149,7 +149,8 @@ def cmd_match(args) -> None:
               "closed_permanently": 0, "websites": 0, "api_errors": 0,
               "requests": 0}
 
-    with PoliteClient(delay=(0.2, 0.4)) as client:
+    # Forced to IPv4 so Google sees the address the key is restricted to.
+    with PoliteClient(delay=(0.2, 0.4), force_ipv4=True) as client:
         for row in rows:
             tid = row["tableonline_id"]
             counts["searched"] += 1

@@ -59,14 +59,22 @@ class PoliteClient:
 
     def __init__(self, delay: tuple[float, float] = DEFAULT_DELAY,
                  timeout: float = 30.0, max_retries: int = 4,
-                 follow_redirects: bool = True, headers: dict | None = None):
+                 follow_redirects: bool = True, headers: dict | None = None,
+                 force_ipv4: bool = False):
         self.delay = delay
         self.max_retries = max_retries
         self._hosts: dict[str, _HostState] = {}
         self._hosts_lock = threading.Lock()
+        # A host with both A and AAAA records is reached over IPv6 by default,
+        # so an API key restricted to the machine's IPv4 address is rejected
+        # for an address nobody thought to whitelist. Binding to 0.0.0.0
+        # forces IPv4, making the source address predictable.
+        transport = httpx.HTTPTransport(local_address="0.0.0.0") \
+            if force_ipv4 else None
         self._client = httpx.Client(
             timeout=timeout,
             follow_redirects=follow_redirects,
+            transport=transport,
             headers={"User-Agent": USER_AGENT,
                      "Accept-Language": "en,fi;q=0.8,et;q=0.6",
                      **(headers or {})},
