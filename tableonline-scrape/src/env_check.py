@@ -45,6 +45,38 @@ def load() -> dict:
     return {k: v for k, v in dotenv_values(ENV).items() if v is not None}
 
 
+def non_ascii(value: str) -> list[tuple[str, int]]:
+    """Distinct non-ASCII characters in a value, with counts.
+
+    A secret pasted from a display that masks it arrives as bullets or
+    asterisks. Those are multi-byte, so the value looks the right *length* in
+    characters while being nonsense — worth naming explicitly rather than
+    leaving the reader to compare a character count against a byte count.
+    """
+    counts: dict[str, int] = {}
+    for ch in value:
+        if ord(ch) > 127:
+            counts[ch] = counts.get(ch, 0) + 1
+    return sorted(counts.items(), key=lambda kv: -kv[1])
+
+
+def describe_bad(value: str) -> list[str]:
+    """Human-readable reasons a value looks wrong."""
+    notes = []
+    weird = non_ascii(value)
+    if weird:
+        shown = ", ".join(f"{ch!r} (U+{ord(ch):04X}) x{n}" for ch, n in weird[:3])
+        notes.append(f"contains {sum(n for _, n in weird)} non-ASCII characters: {shown}")
+        notes.append("That is what a masked secret looks like when it is copied "
+                     "from a display that hides it. Copy the key from the source "
+                     "that holds the real value, not from a screen showing dots.")
+    if "\n" in value or " " in value:
+        notes.append("contains whitespace or a line break, so the assignment is "
+                     "spilling past its own line")
+    notes.append(f"{len(value)} characters, {len(value.encode('utf-8'))} bytes")
+    return notes
+
+
 def _mask(value: str) -> str:
     if len(value) <= 12:
         return "*" * len(value)
@@ -80,16 +112,15 @@ def report() -> int:
             print(f"  {name}: OK  {_mask(value)}  ({len(value)} chars)")
         else:
             problems += 1
-            print(f"  {name}: MALFORMED  {_mask(value)}  ({len(value)} chars)")
+            print(f"  {name}: MALFORMED  {_mask(value)}")
             print(f"    {hint}")
-            if "\n" in value or " " in value:
-                print("    The value contains whitespace or a line break, so the "
-                      "assignment is spilling past its own line.")
+            for note in describe_bad(value):
+                print(f"    {note}")
             print(f"    Repair it with:  python -m src.env_check --set {name}=<value>")
     return problems
 
 
-def set_value(assignment: str) -> None:
+def set_value(assignment: str, force: bool = False) -> None:
     """Rewrite one variable safely, collapsing any duplicates to a single line."""
     if "=" not in assignment:
         raise SystemExit("expected NAME=value")
@@ -99,6 +130,18 @@ def set_value(assignment: str) -> None:
         raise SystemExit(f"{name!r} is not a valid variable name")
     if "\n" in value:
         raise SystemExit("value must be a single line")
+
+    # Refuse before writing. Writing a bad value and warning about it leaves
+    # the file worse than it was and the failure surfaces three steps later.
+    check = CHECKS.get(name)
+    if check and value and not check[0].match(value) and not force:
+        print(f"REFUSED: that value is not a valid {name}.", file=sys.stderr)
+        print(f"  {check[1]}", file=sys.stderr)
+        for note in describe_bad(value):
+            print(f"  {note}", file=sys.stderr)
+        print("  .env was left unchanged. Re-copy the value and try again "
+              "(--force overrides).", file=sys.stderr)
+        raise SystemExit(1)
 
     lines = ENV.read_text(encoding="utf-8").splitlines() if ENV.exists() else []
     out, written = [], False
@@ -117,10 +160,6 @@ def set_value(assignment: str) -> None:
     ENV.chmod(0o600)
     print(f"{name} set to {_mask(value)} ({len(value)} chars) in {ENV}")
 
-    check = CHECKS.get(name)
-    if check and not check[0].match(value):
-        print(f"WARNING: {check[1]} — the value written does not match that shape.")
-
 
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__,
@@ -129,10 +168,12 @@ def main(argv=None) -> None:
                    help="print one value, for use by shell scripts")
     p.add_argument("--set", dest="assignment", metavar="NAME=VALUE",
                    help="write one value safely, collapsing duplicates")
+    p.add_argument("--force", action="store_true",
+                   help="write even if the value fails its format check")
     args = p.parse_args(argv)
 
     if args.assignment:
-        set_value(args.assignment)
+        set_value(args.assignment, force=args.force)
         return
     if args.print_var:
         sys.stdout.write((load().get(args.print_var) or "").strip())
