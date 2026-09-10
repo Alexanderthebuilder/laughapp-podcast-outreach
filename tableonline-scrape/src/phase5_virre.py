@@ -22,6 +22,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import base64
+
 from lib.db import now, upsert
 from lib.paths import ROOT
 from lib.virre import ROLE_LABEL, parse_extract
@@ -48,6 +50,31 @@ def pending(conn, limit: int | None) -> list[tuple[int, str]]:
     todo = [(r["restaurant_id"], r["business_id"]) for r in rows
             if not (PDF_DIR / f"{r['business_id']}.pdf").exists()]
     return todo[:limit] if limit else todo
+
+
+# Read the object URL back as base64 from the page that created it. A blob
+# belongs to the document that made it, and the click happens on the company
+# page, so that is where the fetch has to run — the viewer tab cannot be
+# scripted.
+_READ_BLOB = """
+async (url) => {
+  const res = await fetch(url);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  let out = '';
+  const CHUNK = 0x8000;   // apply() on the whole array overflows the stack
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(out);
+}
+"""
+
+
+def _read_blob(page, url: str) -> bytes | None:
+    try:
+        return base64.b64decode(page.evaluate(_READ_BLOB, url))
+    except Exception:
+        return None
 
 
 def fetch(conn, limit: int | None, headed: bool = False,
@@ -79,11 +106,20 @@ def fetch(conn, limit: int | None, headed: bool = False,
         body: list[bytes] = []
 
         seen: list[str] = []
+        blobs: list[str] = []
 
         def capture(response):
             kind = response.headers.get("content-type") or ""
             seen.append(f"{kind.split(';')[0]} {response.url[:70]}")
-            if "application/pdf" in kind:
+            if "application/pdf" not in kind:
+                return
+            if response.url.startswith("blob:"):
+                # The PDF never crosses the network. The page builds it from
+                # an earlier RSC payload and hands the viewer an object URL,
+                # so there is no response body to ask for — only the blob,
+                # readable from inside the page that created it.
+                blobs.append(response.url)
+            else:
                 try:
                     body.append(response.body())
                 except Exception:
@@ -94,6 +130,7 @@ def fetch(conn, limit: int | None, headed: bool = False,
         for i, (rid, bid) in enumerate(todo, 1):
             body.clear()
             seen.clear()
+            blobs.clear()
             try:
                 page.goto(COMPANY.format(bid), wait_until="domcontentloaded",
                           timeout=30000)
@@ -105,9 +142,13 @@ def fetch(conn, limit: int | None, headed: bool = False,
                 # fires and there is nothing to await. Poll instead, and stop
                 # as soon as the response listener has it.
                 for _ in range(30):
-                    if body:
+                    if body or blobs:
                         break
                     page.wait_for_timeout(500)
+                if blobs and not body:
+                    got = _read_blob(page, blobs[-1])
+                    if got:
+                        body.append(got)
                 # Close any tab the click opened, or they accumulate across
                 # 439 companies until the browser runs out of memory.
                 for extra in context.pages[1:]:
@@ -116,15 +157,24 @@ def fetch(conn, limit: int | None, headed: bool = False,
                 print(f"  [{i}/{len(todo)}] {bid} failed: "
                       f"{type(exc).__name__}: {str(exc)[:80]}")
 
-            if body:
+            # A blob read that half-worked returns bytes that are not a PDF,
+            # and the parse step would then report an unreadable file for a
+            # fetch problem. Check the magic number here instead.
+            if body and body[-1].startswith(b"%PDF"):
                 (PDF_DIR / f"{bid}.pdf").write_bytes(body[-1])
                 got += 1
                 print(f"  [{i}/{len(todo)}] {bid} saved "
                       f"({len(body[-1]) // 1024} kB)")
+            elif body:
+                missed += 1
+                print(f"  [{i}/{len(todo)}] {bid} got {len(body[-1])} bytes "
+                      f"that are not a PDF")
             else:
                 missed += 1
                 print(f"  [{i}/{len(todo)}] {bid} no PDF seen")
                 if debug:
+                    if blobs:
+                        print(f"    blob seen but unreadable: {blobs[-1][:60]}")
                     print("    responses:")
                     for line in seen[-12:]:
                         print(f"      {line}")
