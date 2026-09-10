@@ -436,6 +436,35 @@ def cmd_groups(args) -> None:
     finish(conn, args)
 
 
+def cmd_ee_inspect(args) -> None:
+    """Say where the person rows are going, rather than only how few arrive."""
+    found = ee.discover(RAW_REGISTRY)
+    path = found.get("board")
+    if not path:
+        print(f"No person file found in {RAW_REGISTRY}", file=sys.stderr)
+        raise SystemExit(2)
+
+    print(f"{path.name}\n")
+    got = ee.inspect_person_file(path, args.sample)
+    print(f"  {got['records']:7d} records walked")
+    for label, key in [("no registry code", "no_code"),
+                       ("no person list at all", "no_person_list"),
+                       ("person list present but empty", "empty_person_list"),
+                       ("people seen", "people"),
+                       ("  dropped, no name matched", "no_name"),
+                       ("  dropped, has an end date", "ended"),
+                       ("  kept", "yielded")]:
+        print(f"  {got[key]:7d} {label}")
+
+    for title, key in [("record keys", "record_keys"),
+                       ("person-list keys matched", "list_keys"),
+                       ("person keys", "person_keys")]:
+        top = sorted(got[key].items(), key=lambda kv: -kv[1])[:14]
+        print(f"\n  {title}:")
+        for name, n in top:
+            print(f"    {n:7d}  {name}")
+
+
 def main(argv=None) -> None:
     p = base_parser(__doc__)
     sub = subcommands(p)
@@ -447,11 +476,16 @@ def main(argv=None) -> None:
                     help="'Basic data' CSV; omit to auto-detect in raw/registry")
     el.add_argument("--board",
                     help="'Persons on registry card' JSON; omit to auto-detect")
+    ins = sub.add_parser("ee-inspect",
+                         help="report why person rows are dropped")
+    ins.add_argument("--sample", type=int, default=20000,
+                     help="records to walk (default 20000)")
     sub.add_parser("match", help="join restaurants to both registers")
     sub.add_parser("groups", help="5c group detection")
     args = p.parse_args(argv)
     {"fi-download": cmd_fi_download, "fi-load": cmd_fi_load,
-     "ee-load": cmd_ee_load, "match": cmd_match, "groups": cmd_groups}[args.cmd](args)
+     "ee-load": cmd_ee_load, "ee-inspect": cmd_ee_inspect,
+     "match": cmd_match, "groups": cmd_groups}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -210,3 +210,47 @@ def test_a_bare_top_level_array_works_too(tmp_path):
 
     rows = list(registry_ee.iter_person_rows(path))
     assert len(rows) == 1 and rows[0]["registrikood"] == "12345678"
+
+
+def test_the_inspector_names_where_rows_are_lost(tmp_path):
+    """A loader that drops records at four points and reports none of them
+    makes "the key names changed" indistinguishable from "everyone looks
+    resigned"."""
+    path = tmp_path / "people.json"
+    path.write_text(json.dumps([
+        # kept
+        {"ariregistri_kood": 1, "kaardile_kantud_isikud": [
+            {"eesnimi": "Mari", "nimi": "Tamm", "lopp_kpv": None}]},
+        # dropped: the person has left the board
+        {"ariregistri_kood": 2, "kaardile_kantud_isikud": [
+            {"eesnimi": "Jaan", "nimi": "Kask", "lopp_kpv": "01.01.2020"}]},
+        # dropped: no key matches a name hint
+        {"ariregistri_kood": 3, "kaardile_kantud_isikud": [
+            {"tundmatu_valja": "x"}]},
+        # dropped: no list whose key looks like people
+        {"ariregistri_kood": 4, "midagi_muud": [{"eesnimi": "Peeter"}]},
+        # dropped: no registry code at all
+        {"nimi": "Kood Puudub OU"},
+    ]), encoding="utf-8")
+
+    got = registry_ee.inspect_person_file(path)
+    assert got["records"] == 5
+    assert got["no_code"] == 1
+    assert got["no_person_list"] == 1
+    assert got["people"] == 3
+    assert got["no_name"] == 1
+    assert got["ended"] == 1
+    assert got["yielded"] == 1
+    assert got["list_keys"]["kaardile_kantud_isikud"] == 3
+
+
+def test_the_inspector_reports_an_empty_person_list_separately(tmp_path):
+    """A company filed with no one on the card is not the same failure as a
+    company whose people could not be read."""
+    path = tmp_path / "people.json"
+    path.write_text(json.dumps([
+        {"ariregistri_kood": 1, "kaardile_kantud_isikud": []},
+    ]), encoding="utf-8")
+
+    got = registry_ee.inspect_person_file(path)
+    assert got["empty_person_list"] == 1 and got["yielded"] == 0

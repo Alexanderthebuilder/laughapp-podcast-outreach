@@ -369,6 +369,61 @@ def iter_person_rows(path) -> Iterator[dict]:
                                        or "juhatuse liige")}
 
 
+def inspect_person_file(path, limit: int = 20000) -> dict:
+    """Count why person rows are and are not produced, over a sample.
+
+    Written after a 1 GB file yielded board members for 6% of companies. The
+    loader drops a record at four separate points and reports none of them,
+    so the difference between "the key names changed" and "everyone looks
+    resigned" was invisible from the outside.
+    """
+    seen: dict = {"records": 0, "no_code": 0, "no_person_list": 0,
+                  "empty_person_list": 0, "people": 0, "no_name": 0,
+                  "ended": 0, "yielded": 0,
+                  "record_keys": {}, "list_keys": {}, "person_keys": {}}
+    for _member, stream in _open_text(Path(path)):
+        for record in _json_records(stream):
+            if seen["records"] >= limit:
+                break
+            seen["records"] += 1
+            for key in record:
+                seen["record_keys"][key] = seen["record_keys"].get(key, 0) + 1
+            if not _first_matching(record, _CODE_HINTS):
+                seen["no_code"] += 1
+                continue
+
+            lists = []
+            for key, value in record.items():
+                if isinstance(value, list) and any(
+                        h in _norm_header(key) for h in _PERSON_LIST_HINTS):
+                    seen["list_keys"][key] = seen["list_keys"].get(key, 0) + 1
+                    lists.append(value)
+                    if not value:
+                        seen["empty_person_list"] += 1
+            if not lists:
+                seen["no_person_list"] += 1
+                continue
+
+            for people in lists:
+                for person in people:
+                    if not isinstance(person, dict):
+                        continue
+                    seen["people"] += 1
+                    for key in person:
+                        seen["person_keys"][key] = \
+                            seen["person_keys"].get(key, 0) + 1
+                    if not _first_matching(person, _PERSON_NAME_HINTS):
+                        seen["no_name"] += 1
+                        continue
+                    if _first_matching(person, ("kehtivuse_lopp", "end_date",
+                                                "lopp_kpv", "loppemise")):
+                        seen["ended"] += 1
+                        continue
+                    seen["yielded"] += 1
+        break
+    return seen
+
+
 def looks_like_xml(path) -> bool:
     path = Path(path)
     if path.suffix.lower() == ".xml":
