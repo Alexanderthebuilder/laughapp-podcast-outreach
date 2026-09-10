@@ -53,6 +53,36 @@ VENDOR_DOMAINS = {
 REJECT_LOCAL = {"email", "your", "youremail", "name", "user", "username",
                 "someone", "noreply", "no-reply", "donotreply", "example"}
 
+def _is_our_own(addr: str) -> bool:
+    """Our own address, or anything else on our own domain.
+
+    The crawler names a contact address in its User-Agent and some sites echo
+    request headers back into the page, so it comes back as a harvested lead.
+    Matching the exact address was not enough: twelve restaurants ended up
+    carrying an address on our domain that was not the one we send. Nothing
+    on that domain can ever be a restaurant's contact, so the whole domain
+    goes.
+    """
+    ours = (CONTACT or "").strip().lower()
+    if not ours or "@" not in ours:
+        return False
+    our_domain = ours.split("@")[1]
+    domain = addr.partition("@")[2]
+    return domain == our_domain or domain.endswith("." + our_domain)
+
+
+# Domains that belong to a site template rather than to a business.
+# "mysite.com" is what Wix ships as the default, and info@mysite.com survives
+# on a published site for years because nothing about it looks broken. It is
+# not a bad address for the restaurant — it is not the restaurant's address at
+# all, and it will bounce or reach a stranger.
+PLACEHOLDER_DOMAINS = {
+    "mysite.com", "example.com", "example.org", "example.net",
+    "domain.com", "yourdomain.com", "yoursite.com", "sitename.com",
+    "company.com", "yourcompany.com", "email.com", "test.com",
+    "wixsite.com", "squarespace.com", "wordpress.com", "webflow.io",
+}
+
 ASSET_RE = re.compile(r"\.(png|jpe?g|gif|svg|webp|ico|css|js|woff2?|ttf|eot|mp4|pdf)$",
                       re.IGNORECASE)
 # "logo@2x.png" is the classic false positive.
@@ -224,7 +254,7 @@ def is_plausible_email(addr: str) -> bool:
     # Our own crawler address. Politeness requires putting a contact address in
     # the User-Agent, and some sites echo that header back into the page — so
     # it gets harvested as a lead, and appeared twice in a live run.
-    if addr == (CONTACT or "").strip().lower():
+    if _is_our_own(addr):
         return False
     if RETINA_RE.search(addr) or ASSET_RE.search(addr):
         return False
@@ -235,6 +265,9 @@ def is_plausible_email(addr: str) -> bool:
         return False
     # Subdomain of a vendor: sentry-next.wixpress.com, cdn.shopify.com
     if any(domain == v or domain.endswith("." + v) for v in VENDOR_DOMAINS):
+        return False
+    if any(domain == d or domain.endswith("." + d)
+           for d in PLACEHOLDER_DOMAINS):
         return False
     if domain.count(".") > 4 or ".." in addr:
         return False

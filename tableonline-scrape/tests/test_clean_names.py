@@ -130,3 +130,29 @@ def test_clearing_a_name_never_removes_the_email(conn):
     conn.commit()
     kept = conn.execute("SELECT email, contact_name FROM contacts").fetchone()
     assert kept["email"] == "info@aoi.fi" and kept["contact_name"] is None
+
+
+def test_purging_removes_our_own_domain_and_templates(tmp_path):
+    """Rejecting these at extraction only helps the next crawl. A finished run
+    still holds them, and re-crawling 546 sites to drop a handful of rows is
+    not a trade worth making."""
+    from lib.db import connect, init_db, now
+    from src.clean_names import purge_placeholder_emails
+
+    conn = connect(str(tmp_path / "t.sqlite"))
+    init_db(conn)
+    conn.execute("INSERT INTO restaurants (tableonline_id, name) VALUES (1,'A')")
+    for email in ["info@ravintola.fi", "info@mysite.com",
+                  "alex@letsumai.com", "myynti@nh-hotels.com"]:
+        conn.execute(
+            "INSERT INTO contacts (restaurant_id, email, source, confidence,"
+            " dedupe_key, found_at) VALUES (1,?,?,?,?,?)",
+            (email, "website_other", "medium", email, now()))
+    conn.commit()
+
+    assert len(purge_placeholder_emails(conn, apply=False)) == 2   # dry run
+    assert conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0] == 4
+
+    purge_placeholder_emails(conn, apply=True)
+    left = {r[0] for r in conn.execute("SELECT email FROM contacts")}
+    assert left == {"info@ravintola.fi", "myynti@nh-hotels.com"}

@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib.emails import _looks_like_person
+from lib.emails import _looks_like_person, is_plausible_email
 from lib.normalise import normalise_name, strip_diacritics
 from lib.paths import EXPORTS
 from src._cli import base_parser, open_db
@@ -141,8 +141,34 @@ def analyse(rows, min_sites: int, owners: dict[str, dict] | None = None
     return rejects, suspects, sites
 
 
+def purge_placeholder_emails(conn, apply: bool) -> list:
+    """Stored addresses that can never be a lead.
+
+    Rejecting these at extraction only helps the next crawl. A run that has
+    already finished still holds them, and re-crawling 546 sites to drop a
+    handful of rows is not a trade worth making.
+
+    The row goes rather than the address alone: a contact whose only value
+    was an unusable address has nothing left, and leaving a nameless,
+    email-less row behind would still outrank nothing in the ordering.
+    """
+    doomed = [r for r in conn.execute(
+        "SELECT id, email, restaurant_id FROM contacts WHERE email IS NOT NULL")
+        if not is_plausible_email(r["email"])]
+    if apply and doomed:
+        conn.executemany("DELETE FROM contacts WHERE id = ?",
+                         [(r["id"],) for r in doomed])
+        conn.commit()
+    return doomed
+
+
 def main(argv=None) -> None:
     p = base_parser(__doc__)
+    p.add_argument("--purge-bad-emails", action="store_true",
+                   dest="purge_placeholders",
+                   help="drop stored addresses that can never be a lead: "
+                        "site templates (info@mysite.com) and our own "
+                        "crawler domain echoed back by a site")
     p.add_argument("--apply", action="store_true",
                    help="clear the flagged names (emails are kept)")
     p.add_argument("--min-sites", type=int, default=DEFAULT_MIN_SITES,
@@ -153,6 +179,18 @@ def main(argv=None) -> None:
     args = p.parse_args(argv)
 
     conn = open_db(args)
+
+    if args.purge_placeholders:
+        doomed = purge_placeholder_emails(conn, args.apply)
+        for row in doomed[:40]:
+            print(f"  {row['email']}")
+        if len(doomed) > 40:
+            print(f"  ... and {len(doomed) - 40} more")
+        print(f"\n{len(doomed)} unusable addresses"
+              + (" removed." if args.apply
+                 else " found. Add --apply to remove them."))
+        return
+
     rows = gather(conn)
     rejects, suspects, sites = analyse(rows, args.min_sites, group_owners(conn))
     reasons = {**rejects, **suspects}

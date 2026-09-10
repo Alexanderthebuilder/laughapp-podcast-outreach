@@ -1,6 +1,8 @@
 """Harvesting and person attribution (Phase 4d)."""
 import re
 
+import pytest
+
 from lib.emails import (attribute_person, decode_cfemail, extract_emails,
                         extract_socials, is_generic_mailbox, is_plausible_email)
 
@@ -75,3 +77,40 @@ def test_social_junk_paths_are_skipped():
             '<a href="https://instagram.com/aoihelsinki">ig</a>')
     handles = {s["handle"] for s in extract_socials(html)}
     assert handles == {"RavintolaAoi", "aoihelsinki"}
+
+
+@pytest.mark.parametrize("addr", [
+    "info@mysite.com",          # Wix ships this as the default
+    "hello@example.com",
+    "contact@yourdomain.com",
+    "info@shop.mysite.com",     # and on a subdomain of one
+])
+def test_template_placeholder_domains_are_rejected(addr):
+    """Not a bad address for the restaurant — not the restaurant's address at
+    all. It survives on a published site for years because nothing about it
+    looks broken, and it will bounce or reach a stranger."""
+    assert not is_plausible_email(addr)
+
+
+@pytest.mark.parametrize("addr", [
+    "info@ravintolaperiscope.fi",
+    "myynti@nh-hotels.com",       # a hotel group's own domain, not a template
+    "info@vapiano.ee",
+])
+def test_a_real_domain_that_is_not_the_venue_is_still_kept(addr):
+    """A group mailing from the parent domain is correct and often the better
+    address. Only templates are rejected here, never merely off-domain ones."""
+    assert is_plausible_email(addr)
+
+
+@pytest.mark.parametrize("addr", [
+    "alex@letsumai.com",        # the address the crawler announces
+    "info@letsumai.com",        # anything else on the same domain
+    "hello@mail.letsumai.com",  # and on a subdomain of it
+])
+def test_our_own_domain_is_never_a_lead(addr):
+    """The crawler names a contact address in its User-Agent and some sites
+    echo request headers into the page, so it comes back as a harvested lead.
+    Matching only the exact address let twelve restaurants end up carrying an
+    address on our own domain."""
+    assert not is_plausible_email(addr)
