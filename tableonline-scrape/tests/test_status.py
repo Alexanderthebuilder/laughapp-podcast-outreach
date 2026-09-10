@@ -102,3 +102,50 @@ def test_off_domain_is_silent_when_there_is_no_website(tmp_path):
     conn.commit()
 
     assert status.off_domain(conn) == []
+
+
+def test_domains_summary_groups_repeats(tmp_path, capsys, monkeypatch):
+    """761 lines is not reviewable. The shape of the problem is in the repeats:
+    one domain across many restaurants is a systematic harvest off the wrong
+    site; a long tail of one-offs is mostly real owners' addresses."""
+    conn = _empty(tmp_path)
+    for rid in (1, 2, 3):
+        conn.execute("INSERT INTO restaurants (tableonline_id, name)"
+                     " VALUES (?, ?)", (rid, f"R{rid}"))
+        conn.execute("INSERT INTO websites (restaurant_id, domain, status)"
+                     " VALUES (?, ?, 'ok')", (rid, f"r{rid}.fi"))
+        conn.execute(
+            "INSERT INTO contacts (restaurant_id, email, source, confidence,"
+            " dedupe_key, found_at) VALUES (?,?,?,?,?,?)",
+            (rid, "x@edu.hel.fi", "website_other", "medium", f"k{rid}", now()))
+    conn.execute(
+        "INSERT INTO contacts (restaurant_id, email, source, confidence,"
+        " dedupe_key, found_at) VALUES (1,'owner@gmail.com','website_other',"
+        "'medium','g1',?)", (now(),))
+    conn.commit()
+
+    monkeypatch.setattr(status, "open_db", lambda a: conn)
+    status.main(["--domains"])
+    out = capsys.readouterr().out
+    assert "4 off-domain contacts across 2 domains" in out
+    assert "edu.hel.fi" in out and "3 restaurant(s)" in out
+    assert "gmail.com" in out and "1 restaurant(s)" in out
+
+
+def test_domains_all_prints_every_row(tmp_path, capsys, monkeypatch):
+    conn = _empty(tmp_path)
+    conn.execute("INSERT INTO restaurants (tableonline_id, name) VALUES (1,'R')")
+    conn.execute("INSERT INTO websites (restaurant_id, domain, status)"
+                 " VALUES (1,'r.fi','ok')")
+    conn.execute(
+        "INSERT INTO contacts (restaurant_id, contact_name, email, source,"
+        " confidence, dedupe_key, found_at)"
+        " VALUES (1,'Maiju Karvonen','maiju@edu.hel.fi','website_other',"
+        "'medium','k',?)", (now(),))
+    conn.commit()
+
+    monkeypatch.setattr(status, "open_db", lambda a: conn)
+    status.main(["--domains", "--all"])
+    out = capsys.readouterr().out
+    assert "Maiju Karvonen" in out and "maiju@edu.hel.fi" in out
+    assert "off-domain contacts across" not in out      # the summary, not the list

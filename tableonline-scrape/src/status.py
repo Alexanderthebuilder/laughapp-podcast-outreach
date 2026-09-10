@@ -5,7 +5,8 @@ looks identical to one that never ran. This answers "where are we" without
 having to re-derive it from six separate queries.
 
   python -m src.status
-  python -m src.status --domains     # contacts whose address is off-domain
+  python -m src.status --domains       # off-domain contacts, grouped by domain
+  python -m src.status --domains --all # every one of them, one per line
 """
 from __future__ import annotations
 
@@ -128,14 +129,39 @@ def _has_column(conn, table: str, column: str) -> bool:
 def main(argv=None) -> None:
     p = base_parser(__doc__)
     p.add_argument("--domains", action="store_true",
-                   help="list contacts whose email domain is not the "
+                   help="report contacts whose email domain is not the "
                         "restaurant's own website domain")
+    p.add_argument("--all", action="store_true",
+                   help="with --domains, print every row instead of a summary")
     args = p.parse_args(argv)
     conn = open_db(args)
     if args.domains:
-        for row in off_domain(conn):
-            print(f"{(row['restaurant'] or '')[:26]:26s} site={row['site'][:22]:22s} "
-                  f"{(row['contact_name'] or '-')[:20]:20s} {row['email']}")
+        rows = off_domain(conn)
+        if args.all:
+            for row in rows:
+                print(f"{(row['restaurant'] or '')[:26]:26s} "
+                      f"site={row['site'][:22]:22s} "
+                      f"{(row['contact_name'] or '-')[:20]:20s} {row['email']}")
+            return
+        # Grouped, because 761 lines is not reviewable and the shape of the
+        # problem is in the repeats: one domain appearing 40 times is a
+        # systematic harvest off the wrong site, while a long tail of
+        # single-restaurant Gmail addresses is mostly real owners.
+        counts: dict[str, int] = {}
+        venues: dict[str, set] = {}
+        for row in rows:
+            dom = row["email"].split("@")[-1].lower()
+            counts[dom] = counts.get(dom, 0) + 1
+            venues.setdefault(dom, set()).add(row["restaurant"])
+        ranked = sorted(counts.items(), key=lambda kv: -kv[1])
+        print(f"{len(rows)} off-domain contacts across {len(counts)} domains\n")
+        for dom, n in ranked[:40]:
+            print(f"  {n:4d}  {dom:34s} {len(venues[dom])} restaurant(s)")
+        tail = sum(n for _, n in ranked[40:])
+        if tail:
+            print(f"  {tail:4d}  (in {len(ranked) - 40} further domains)")
+        print("\nA domain on many restaurants is a harvest off the wrong site.")
+        print("A domain on one restaurant is usually that owner's real address.")
         return
     report(conn)
 
