@@ -254,3 +254,84 @@ def test_the_inspector_reports_an_empty_person_list_separately(tmp_path):
 
     got = registry_ee.inspect_person_file(path)
     assert got["empty_person_list"] == 1 and got["yielded"] == 0
+
+
+REAL_SHAPE = [{
+    "ariregistri_kood": 12345678,
+    "nimi": "Naide Restoran OU",
+    "kaardile_kantud_isikud": [
+        {"kirje_id": 1, "kaardi_tyyp": "B", "kande_nr": 4,
+         "isiku_tyyp": "F", "isiku_roll": "JUHL",
+         "isiku_roll_tekstina": "juhatuse liige",
+         "eesnimi": "Mari", "nimi_arinimi": "Tamm",
+         "algus_kpv": "05.06.2023", "lopp_kpv": None},
+        {"kirje_id": 2, "isiku_tyyp": "F", "isiku_roll_tekstina": "juhatuse liige",
+         "eesnimi": "Jaan", "nimi_arinimi": "Kask",
+         "algus_kpv": "01.01.2019", "lopp_kpv": "01.01.2021"},
+    ],
+    # Beside the people, matching the hints, holding nobody.
+    "esindusoiguse_normaalregulatsioonid": [
+        {"kirje_id": 9, "kaardi_piirkond": 1, "kaardi_nr": 2, "kande_nr": 3,
+         "algus_kpv": "05.06.2023", "lopp_kpv": None}],
+    "esindusoiguse_eritingimused": [
+        {"kirje_id": 10, "kaardi_nr": 2, "algus_kpv": "05.06.2023"}],
+}]
+
+
+def test_the_given_name_and_surname_are_joined(tmp_path):
+    """They arrive as separate fields. Matching whichever came first returned
+    the surname alone, which the two-word rule then rejected — so every
+    Estonian person was silently thrown away."""
+    path = tmp_path / "people.json"
+    path.write_text(json.dumps(REAL_SHAPE), encoding="utf-8")
+
+    rows = list(iter_person_rows(path))
+    assert [r["person_name"] for r in rows] == ["Mari Tamm"]
+    assert rows[0]["role"] == "juhatuse liige"
+
+
+def test_a_joined_name_survives_normalisation(tmp_path):
+    """The bug only bit at the end: normalise_board_member drops a one-word
+    name as a placeholder, so a surname-only row never reached the table."""
+    assert normalise_board_member(
+        {"registrikood": "12345678", "person_name": "Tamm"}) is None
+    got = normalise_board_member(
+        {"registrikood": "12345678", "person_name": "Mari Tamm"})
+    assert got["person_name"] == "Mari Tamm"
+
+
+def test_representation_rules_are_not_walked_as_people(tmp_path):
+    """esindusoiguse_* match the person-list hints and carry card numbers
+    rather than names — 16624 of them in a 20000-record sample."""
+    path = tmp_path / "people.json"
+    path.write_text(json.dumps(REAL_SHAPE), encoding="utf-8")
+
+    got = registry_ee.inspect_person_file(path)
+    assert got["people"] == 2                    # not 4
+    assert got["no_name"] == 0                   # nothing walked without one
+    assert got["ended"] == 1 and got["yielded"] == 1
+    assert "esindusoiguse_eritingimused" not in got["list_keys"]
+
+
+def test_the_role_comes_from_the_words_not_the_code(tmp_path):
+    """isiku_roll is "JUHL"; isiku_roll_tekstina is "juhatuse liige"."""
+    path = tmp_path / "people.json"
+    path.write_text(json.dumps(REAL_SHAPE), encoding="utf-8")
+
+    assert list(iter_person_rows(path))[0]["role"] == "juhatuse liige"
+
+
+def test_a_company_on_the_board_is_still_rejected(tmp_path):
+    """A legal entity has no given name, so it falls through to the combined
+    field and must still be caught downstream."""
+    path = tmp_path / "people.json"
+    path.write_text(json.dumps([{
+        "ariregistri_kood": 12345678,
+        "kaardile_kantud_isikud": [
+            {"isiku_tyyp": "J", "nimi_arinimi": "Haldus Partnerid OU",
+             "lopp_kpv": None}],
+    }]), encoding="utf-8")
+
+    rows = list(iter_person_rows(path))
+    assert rows and rows[0]["person_name"] == "Haldus Partnerid OU"
+    assert normalise_board_member(rows[0]) is None

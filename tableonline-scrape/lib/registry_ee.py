@@ -298,9 +298,40 @@ def normalise_board_member(row: dict) -> dict | None:
 # so both the list and the fields inside it are found by matching rather than
 # by path.
 _PERSON_LIST_HINTS = ("isik", "person", "kaardile", "kanne", "esindus")
-_PERSON_NAME_HINTS = ("isiku_nimi", "nimi_arinimi", "person_name", "eesnimi",
-                      "nimi", "name")
-_PERSON_ROLE_HINTS = ("isiku_roll", "roll", "role", "kaardi_tyyp", "ametikoht")
+# Lists that sit beside the people and match those hints without holding any:
+# esindusoiguse_* are representation rules, carrying card and entry numbers
+# and no name at all. Walking them costs nothing but noise in the counts.
+_NOT_PERSON_LISTS = ("esindusoigus", "normaalregulatsioon", "eritingimus",
+                     "hooneyhistu")
+
+# A natural person's name arrives in two fields — eesnimi and nimi_arinimi —
+# and matching whichever comes first returns the surname on its own. Since a
+# one-word name is then rejected as a placeholder, first-match quietly threw
+# away every Estonian person in the file.
+_GIVEN_NAME_HINTS = ("eesnimi", "first_name", "given_name")
+_SURNAME_HINTS = ("nimi_arinimi", "perekonnanimi", "last_name", "surname")
+# Only for releases that publish one combined field.
+_PERSON_NAME_HINTS = ("isiku_nimi", "person_name", "nimi_arinimi", "nimi",
+                      "name")
+# The _tekstina variant is the role in words; the plain one is a code.
+_PERSON_ROLE_HINTS = ("isiku_roll_tekstina", "roll_tekstina", "isiku_roll",
+                      "roll", "role", "ametikoht")
+
+
+def person_name(person: dict) -> str | None:
+    """A person's full name, given name first.
+
+    Both halves or nothing: a surname on its own cannot open an email, and
+    letting one through means greeting somebody by their family name.
+    """
+    given = _first_matching(person, _GIVEN_NAME_HINTS)
+    surname = _first_matching(person, _SURNAME_HINTS)
+    if given and surname:
+        return f"{str(given).strip()} {str(surname).strip()}".strip()
+    # A legal entity on the board has no given name, and a combined-field
+    # release has no separate one; both are handled downstream.
+    single = _first_matching(person, _PERSON_NAME_HINTS)
+    return str(single).strip() if single else None
 _CODE_HINTS = ("ariregistri_kood", "registrikood", "reg_kood", "kood",
                "registry_code")
 
@@ -317,9 +348,13 @@ def _first_matching(record: dict, hints: tuple[str, ...]):
 def _person_lists(record: dict):
     """Nested lists that look like they hold people."""
     for key, value in record.items():
-        if isinstance(value, list) and value and isinstance(value[0], dict):
-            if any(h in _norm_header(key) for h in _PERSON_LIST_HINTS):
-                yield value
+        if not (isinstance(value, list) and value and isinstance(value[0], dict)):
+            continue
+        folded = _norm_header(key)
+        if any(bad in folded for bad in _NOT_PERSON_LISTS):
+            continue
+        if any(h in folded for h in _PERSON_LIST_HINTS):
+            yield value
 
 
 def iter_person_rows(path) -> Iterator[dict]:
@@ -346,7 +381,7 @@ def iter_person_rows(path) -> Iterator[dict]:
                 for person in people:
                     if not isinstance(person, dict):
                         continue
-                    name = _first_matching(person, _PERSON_NAME_HINTS)
+                    name = person_name(person)
                     if not name:
                         continue
                     found_nested = True
@@ -362,7 +397,7 @@ def iter_person_rows(path) -> Iterator[dict]:
                                        or "juhatuse liige")}
             if not found_nested:
                 # Already one row per person.
-                name = _first_matching(record, _PERSON_NAME_HINTS)
+                name = person_name(record)
                 if name:
                     yield {"registrikood": str(code), "person_name": str(name),
                            "role": str(_first_matching(record, _PERSON_ROLE_HINTS)
@@ -394,8 +429,10 @@ def inspect_person_file(path, limit: int = 20000) -> dict:
 
             lists = []
             for key, value in record.items():
-                if isinstance(value, list) and any(
-                        h in _norm_header(key) for h in _PERSON_LIST_HINTS):
+                folded = _norm_header(key)
+                if isinstance(value, list) \
+                        and not any(b in folded for b in _NOT_PERSON_LISTS) \
+                        and any(h in folded for h in _PERSON_LIST_HINTS):
                     seen["list_keys"][key] = seen["list_keys"].get(key, 0) + 1
                     lists.append(value)
                     if not value:
@@ -412,7 +449,7 @@ def inspect_person_file(path, limit: int = 20000) -> dict:
                     for key in person:
                         seen["person_keys"][key] = \
                             seen["person_keys"].get(key, 0) + 1
-                    if not _first_matching(person, _PERSON_NAME_HINTS):
+                    if not person_name(person):
                         seen["no_name"] += 1
                         continue
                     if _first_matching(person, ("kehtivuse_lopp", "end_date",
