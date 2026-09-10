@@ -33,6 +33,7 @@ def connect(path=None) -> sqlite3.Connection:
 # IF NOT EXISTS will not add them, so they are applied explicitly.
 _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     "restaurants": [("lat", "REAL"), ("lng", "REAL")],
+    "name_verdicts": [("cleaned_name", "TEXT")],
 }
 
 

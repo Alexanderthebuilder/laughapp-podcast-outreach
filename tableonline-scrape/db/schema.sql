@@ -304,6 +304,7 @@ CREATE TABLE IF NOT EXISTS name_verdicts (
     name_norm           TEXT PRIMARY KEY,
     name                TEXT,
     is_person           INTEGER,           -- 1 = a human name, 0 = not
+    cleaned_name        TEXT,              -- name with label words trimmed off
     confidence          TEXT,              -- high | medium | low
     reason              TEXT,
     model               TEXT,
