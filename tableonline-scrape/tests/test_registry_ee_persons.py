@@ -5,9 +5,11 @@ the key names change between releases, so both the list and the fields inside
 it are located by matching rather than by path.
 """
 import json
+from pathlib import Path
 
 import pytest
 
+from lib import registry_ee
 from lib.registry_ee import iter_person_rows, normalise_board_member
 
 NESTED = [
@@ -138,3 +140,73 @@ def test_a_real_person_still_passes():
     got = normalise_board_member(
         {"registrikood": "12345678", "person_name": "Mari Tamm"})
     assert got["person_name"] == "Mari Tamm"
+
+
+def _big_person_file(path, records=20000):
+    """A file large enough that reading all of it is obvious in a byte count."""
+    import json as _json
+    with path.open("w", encoding="utf-8") as fh:
+        fh.write('{"ettevotjad":[')
+        for i in range(records):
+            if i:
+                fh.write(",")
+            fh.write(_json.dumps({
+                "ariregistri_kood": 10000000 + i,
+                "nimi": f"Naide {i} OU",
+                "kaardile_kantud_isikud": [
+                    {"eesnimi": "Mari", "nimi": f"Tamm{i}",
+                     "isiku_tyyp": "juhatuse liige"}],
+            }, ensure_ascii=False))
+        fh.write("]}")
+    return path
+
+
+def test_classifying_a_large_file_does_not_read_all_of_it(tmp_path, monkeypatch):
+    """has_nested_people answers a yes/no question. Parsing a gigabyte to do
+    it is what took the box down: json.load built the whole document first."""
+    path = _big_person_file(tmp_path / "people.json")
+    size = path.stat().st_size
+    assert size > 2_000_000, "fixture too small to prove anything"
+
+    read = []
+    real_open = Path.open
+
+    def counting_open(self, *a, **kw):
+        fh = real_open(self, *a, **kw)
+        if "b" in (a[0] if a else kw.get("mode", "r")):
+            inner_read = fh.read
+
+            def tracked(n=-1):
+                chunk = inner_read(n)
+                read.append(len(chunk))
+                return chunk
+            fh.read = tracked
+        return fh
+
+    monkeypatch.setattr(Path, "open", counting_open)
+    assert registry_ee.has_nested_people(path) is True
+    assert sum(read) < size / 4, (
+        f"read {sum(read)} of {size} bytes to classify the file")
+
+
+def test_a_large_file_yields_every_person(tmp_path):
+    """Streaming must not silently truncate: the whole file still comes out."""
+    path = _big_person_file(tmp_path / "people.json", records=5000)
+    rows = list(registry_ee.iter_person_rows(path))
+    assert len(rows) == 5000
+    assert rows[0]["registrikood"] == "10000000"
+    assert rows[-1]["registrikood"] == "10004999"
+
+
+def test_a_bare_top_level_array_works_too(tmp_path):
+    """The register publishes both shapes; the wrapping key is found by
+    walking events, not guessed from a list of names."""
+    import json as _json
+    path = tmp_path / "flat.json"
+    path.write_text(_json.dumps([
+        {"ariregistri_kood": 12345678, "nimi": "Naide OU",
+         "kaardile_kantud_isikud": [{"eesnimi": "Jaan", "nimi": "Kask"}]},
+    ]), encoding="utf-8")
+
+    rows = list(registry_ee.iter_person_rows(path))
+    assert len(rows) == 1 and rows[0]["registrikood"] == "12345678"

@@ -111,7 +111,13 @@ def map_headers(headers: list[str], mapping: dict[str, str]) -> dict[int, str]:
 
 
 def _open_text(path: Path) -> Iterator[tuple[str, io.TextIOBase]]:
-    """Yield (member_name, text stream) for a csv/json file or a zip of them."""
+    """Yield (member_name, text stream) for a csv/json file or a zip of them.
+
+    Streamed off disk rather than read into memory. The register's person
+    file is over a gigabyte; reading it into bytes and decoding that to a str
+    costs several gigabytes before any parsing starts, which is enough to
+    take a modest VPS down.
+    """
     path = Path(path)
     if path.suffix.lower() == ".zip":
         with zipfile.ZipFile(path) as zf:
@@ -119,19 +125,71 @@ def _open_text(path: Path) -> Iterator[tuple[str, io.TextIOBase]]:
                 if info.is_dir() or not info.filename.lower().endswith((".csv", ".json")):
                     continue
                 with zf.open(info) as fh:
-                    data = fh.read()
-                yield info.filename, io.StringIO(_decode(data))
+                    yield info.filename, _as_text(fh)
     else:
-        yield path.name, io.StringIO(_decode(path.read_bytes()))
+        with path.open("rb") as fh:
+            yield path.name, _as_text(fh)
 
 
-def _decode(data: bytes) -> str:
-    for enc in ("utf-8-sig", "utf-8", "cp1257", "iso-8859-13", "latin-1"):
+def _as_text(binary) -> io.TextIOBase:
+    return io.TextIOWrapper(binary, encoding=_sniff_encoding(binary),
+                            errors="replace", newline="")
+
+
+def _sniff_encoding(binary) -> str:
+    """Pick an encoding from the first 64 kB rather than the whole file.
+
+    errors="replace" covers a byte further in that the prefix did not predict:
+    one mangled character in a name is a far smaller price than holding the
+    file in memory to be certain.
+    """
+    head = binary.read(65536)
+    binary.seek(0)
+    for enc in ("utf-8-sig", "utf-8", "cp1257", "iso-8859-13"):
         try:
-            return data.decode(enc)
+            # Trim any multi-byte character straddling the cut, which would
+            # otherwise reject a correct encoding.
+            head[:-4].decode(enc)
+            return enc
         except UnicodeDecodeError:
             continue
-    return data.decode("utf-8", errors="replace")
+    return "latin-1"
+
+
+def _json_records(stream) -> Iterator[dict]:
+    """Stream the records out of a JSON file without building it in memory.
+
+    Handles both shapes the register publishes: a bare top-level array, and an
+    object wrapping one. The wrapping key is found by walking events rather
+    than guessed from a list of names, so a renamed key still works.
+    """
+    import ijson
+
+    # ijson reads bytes. Handing it the decoded text stream makes it convert
+    # back on the fly, which on a gigabyte is real work for nothing — so
+    # reach through to the byte stream the wrapper sits on.
+    raw = getattr(stream, "buffer", None)
+    if raw is not None:
+        raw.seek(0)
+        stream = raw
+    else:
+        # An in-memory stream, which only the tests supply; encoding it is
+        # cheap there and never happens against a real file.
+        stream.seek(0)
+        stream = io.BytesIO(stream.read().encode("utf-8"))
+
+    prefix = None
+    for path_, event, _value in ijson.parse(stream):
+        if event in ("start_map", "start_array") and path_:
+            prefix = path_ if event == "start_map" else None
+            if prefix:
+                break
+    if prefix is None:
+        return
+    stream.seek(0)
+    for record in ijson.items(stream, prefix):
+        if isinstance(record, dict):
+            yield record
 
 
 def _sniff(sample: str) -> str:
@@ -153,17 +211,7 @@ def iter_rows(path, mapping: dict[str, str]) -> Iterator[dict]:
         stream.seek(0)
         stripped = head.lstrip()
         if stripped.startswith(("[", "{")):
-            try:
-                payload = json.load(stream)
-            except json.JSONDecodeError:
-                continue
-            records = payload if isinstance(payload, list) else \
-                next((v for v in (payload.get(k) for k in
-                                  ("data", "items", "results", "ettevotjad"))
-                      if isinstance(v, list)), [])
-            for rec in records:
-                if not isinstance(rec, dict):
-                    continue
+            for rec in _json_records(stream):
                 idx_map = map_headers(list(rec.keys()), mapping)
                 keys = list(rec.keys())
                 row = {idx_map[i]: rec[keys[i]] for i in idx_map
@@ -289,15 +337,7 @@ def iter_person_rows(path) -> Iterator[dict]:
             for row in iter_rows(path, BOARD_COLUMNS):
                 yield row
             return
-        try:
-            payload = json.load(stream)
-        except json.JSONDecodeError:
-            continue
-        records = payload if isinstance(payload, list) else next(
-            (v for v in payload.values() if isinstance(v, list)), [])
-        for record in records:
-            if not isinstance(record, dict):
-                continue
+        for record in _json_records(stream):
             code = _first_matching(record, _CODE_HINTS)
             if not code:
                 continue
@@ -354,11 +394,11 @@ def has_nested_people(path) -> bool:
             stream.seek(0)
             if not head.lstrip().startswith(("[", "{")):
                 return False
-            payload = json.load(stream)
-            records = payload if isinstance(payload, list) else next(
-                (v for v in payload.values() if isinstance(v, list)), [])
-            for record in records[:50]:
-                if isinstance(record, dict) and any(_person_lists(record)):
+            # Only the first records are needed to classify the file, and
+            # reading further would mean parsing a gigabyte to answer a
+            # yes/no question.
+            for record, _ in zip(_json_records(stream), range(50)):
+                if any(_person_lists(record)):
                     return True
             return False
     except (OSError, json.JSONDecodeError, StopIteration):
