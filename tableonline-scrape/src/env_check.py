@@ -9,10 +9,12 @@ this module, so what is checked is exactly what the run will use.
   python -m src.env_check                 # report on every key
   python -m src.env_check --print GOOGLE_PLACES_API_KEY
   python -m src.env_check --set GOOGLE_PLACES_API_KEY=AIza...
+  python -m src.env_check --set-secret ANTHROPIC_API_KEY   # hidden prompt
 """
 from __future__ import annotations
 
 import argparse
+import getpass
 import re
 import sys
 from pathlib import Path
@@ -22,11 +24,18 @@ ENV = ROOT / ".env"
 
 # A Google API key is "AIza" plus 35 characters from the URL-safe alphabet.
 GOOGLE_KEY_RE = re.compile(r"^AIza[0-9A-Za-z_\-]{35}$")
+# Anthropic keys carry an "sk-ant-" prefix; the tail length is not fixed, so
+# the check is deliberately loose — enough to catch a truncated paste or a
+# masked value, not so tight that a valid key is refused.
+ANTHROPIC_KEY_RE = re.compile(r"^sk-ant-[0-9A-Za-z_\-]{24,}$")
 
 CHECKS = {
     "GOOGLE_PLACES_API_KEY": (
         GOOGLE_KEY_RE,
         'a Google API key is 39 characters and starts "AIza"'),
+    "ANTHROPIC_API_KEY": (
+        ANTHROPIC_KEY_RE,
+        'an Anthropic API key starts "sk-ant-" and has no spaces'),
 }
 
 
@@ -116,7 +125,14 @@ def report() -> int:
             print(f"    {hint}")
             for note in describe_bad(value):
                 print(f"    {note}")
-            print(f"    Repair it with:  python -m src.env_check --set {name}=<value>")
+            print(f"    Repair it with:  python -m src.env_check --set-secret {name}")
+
+    # A key with no format check still has to be visible: "not set" is the
+    # answer to most "why did it say no credentials" questions.
+    for name in sorted(set(values) - set(CHECKS)):
+        value = (values.get(name) or "").strip()
+        print(f"  {name}: set  {_mask(value)}  ({len(value)} chars)"
+              if value else f"  {name}: empty")
     return problems
 
 
@@ -168,10 +184,22 @@ def main(argv=None) -> None:
                    help="print one value, for use by shell scripts")
     p.add_argument("--set", dest="assignment", metavar="NAME=VALUE",
                    help="write one value safely, collapsing duplicates")
+    p.add_argument("--set-secret", dest="secret_var", metavar="NAME",
+                   help="prompt for a value without echoing it, then write it "
+                        "— keeps the secret out of shell history")
     p.add_argument("--force", action="store_true",
                    help="write even if the value fails its format check")
     args = p.parse_args(argv)
 
+    if args.secret_var:
+        # Reading it here rather than from the command line keeps the secret
+        # out of shell history, and out of the argv every other user on the
+        # box can read from /proc.
+        value = getpass.getpass(f"{args.secret_var} (input hidden): ").strip()
+        if not value:
+            raise SystemExit("nothing entered; .env unchanged")
+        set_value(f"{args.secret_var}={value}", force=args.force)
+        return
     if args.assignment:
         set_value(args.assignment, force=args.force)
         return
