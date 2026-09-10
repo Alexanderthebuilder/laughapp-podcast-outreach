@@ -263,9 +263,34 @@ def main(argv=None) -> None:
     p.add_argument("--model", default=MODEL)
     p.add_argument("--import", dest="import_csv", metavar="FILE",
                    help="load verdicts from a CSV instead of calling the API")
+    p.add_argument("--dump-unjudged", metavar="FILE",
+                   help="write the names still lacking a verdict, with their "
+                        "evidence, for judging elsewhere")
     args = p.parse_args(argv)
 
     conn = open_db(args)
+
+    if args.dump_unjudged:
+        import csv as _csv
+        todo = candidates(conn, recheck=False)
+        # Judging only the names that reach the sheet is not enough: clearing a
+        # restaurant's best contact promotes the next one, which may itself be
+        # unjudged. Everything still carrying a name has to be covered.
+        with open(args.dump_unjudged, "w", newline="", encoding="utf-8") as fh:
+            w = _csv.writer(fh)
+            w.writerow(["harvested_string", "role", "restaurant",
+                        "email_local", "address_decodes_to", "venues", "hint"])
+            for it in todo:
+                email = it.get("email") or ""
+                w.writerow([it["name"], it.get("role") or "",
+                            it.get("restaurant") or "",
+                            email.split("@")[0] if email else "",
+                            name_from_email(email) or "", it["venues"],
+                            hint(it["name"])])
+        print(f"{len(todo)} names still unjudged -> {args.dump_unjudged}")
+        already = conn.execute("SELECT COUNT(*) FROM name_verdicts").fetchone()[0]
+        print(f"{already} already judged")
+        return
 
     if args.import_csv:
         loaded, skipped = import_verdicts(conn, args.import_csv)

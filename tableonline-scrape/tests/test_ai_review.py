@@ -187,3 +187,25 @@ def test_blank_rows_are_skipped_not_stored(conn, tmp_path):
         ["", 1, "", ""], ["Matti Virtanen", 1, "Matti Virtanen", ""],
     ]))
     assert (loaded, skipped) == (1, 1)
+
+
+def test_dumping_covers_every_name_not_just_the_ones_in_the_sheet(conn, tmp_path):
+    """The sheet shows one best contact per restaurant. Clearing that contact
+    promotes the next one, so judging only what the sheet showed leaves the
+    replacements unjudged — which is exactly how junk reappeared."""
+    import csv
+    import src.ai_review_names as ai
+
+    # A second, lower-ranked contact at the same restaurant.
+    add_contact(conn, 1, email="info2@aoi.fi", contact_name="Aukioloajat Ma",
+                contact_role=None, source="website_other", source_url="u",
+                confidence="low")
+    conn.execute("INSERT INTO name_verdicts (name_norm, name, is_person)"
+                 " VALUES ('matti virtanen','Matti Virtanen',1)")
+    conn.commit()
+
+    out = tmp_path / "unjudged.csv"
+    remaining = {c["name"] for c in candidates(conn, recheck=False)}
+    assert "Matti Virtanen" not in remaining      # already judged
+    assert "Aukioloajat Ma" in remaining          # the promoted replacement
+    assert "Karjalan Piirakka" in remaining
