@@ -153,10 +153,14 @@ def cmd_fi_load(args) -> None:
 def cmd_ee_load(args) -> None:
     """Load the Estonian bulk files.
 
-    Filenames change between releases, so paths are passed in explicitly.
-    Download them from https://avaandmed.ariregister.rik.ee (downloading
-    open-data section): the company details file (ettevotja_rekvisiidid) and
-    the representation / board members file.
+    From https://avaandmed.ariregister.rik.ee (downloading open data), take:
+      --companies  "Basic data" as CSV — registry code, name, status, address
+      --board      "Persons on registry card" as JSON — the board members
+
+    "Persons on registry card" is published only as XML/JSON and nests its
+    people inside each company record, which iter_person_rows flattens. Key
+    names change between releases, so both files are read by matching field
+    names rather than by position or path.
     """
     conn = open_db(args)
     run_id = start_run(conn, f"{PHASE}.ee_load")
@@ -182,7 +186,7 @@ def cmd_ee_load(args) -> None:
                   "COMPANY_COLUMNS in lib/registry_ee.py.", file=sys.stderr)
 
     if args.board:
-        for row in ee.iter_rows(args.board, ee.BOARD_COLUMNS):
+        for row in ee.iter_person_rows(args.board):
             norm = ee.normalise_board_member(row)
             if norm is None:
                 counts["skipped_rows"] += 1

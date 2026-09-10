@@ -229,6 +229,92 @@ def normalise_board_member(row: dict) -> dict | None:
     return {"registrikood": code, "person_name": name, "role": role}
 
 
+# --- nested person records -------------------------------------------------
+
+# "Persons on registry card" ships as XML/JSON only, and each company record
+# carries its persons in a nested list. The key names differ between releases,
+# so both the list and the fields inside it are found by matching rather than
+# by path.
+_PERSON_LIST_HINTS = ("isik", "person", "kaardile", "kanne", "esindus")
+_PERSON_NAME_HINTS = ("isiku_nimi", "nimi_arinimi", "person_name", "eesnimi",
+                      "nimi", "name")
+_PERSON_ROLE_HINTS = ("isiku_roll", "roll", "role", "kaardi_tyyp", "ametikoht")
+_CODE_HINTS = ("ariregistri_kood", "registrikood", "reg_kood", "kood",
+               "registry_code")
+
+
+def _first_matching(record: dict, hints: tuple[str, ...]):
+    """Value of the first key whose normalised name contains a hint."""
+    for hint in hints:
+        for key, value in record.items():
+            if hint in _norm_header(key) and value not in (None, "", []):
+                return value
+    return None
+
+
+def _person_lists(record: dict):
+    """Nested lists that look like they hold people."""
+    for key, value in record.items():
+        if isinstance(value, list) and value and isinstance(value[0], dict):
+            if any(h in _norm_header(key) for h in _PERSON_LIST_HINTS):
+                yield value
+
+
+def iter_person_rows(path) -> Iterator[dict]:
+    """Flatten "Persons on registry card" into one row per person.
+
+    Accepts the nested JSON the register publishes, and also a flat CSV of the
+    same data, so a future release that adds a CSV needs no change here.
+    """
+    path = Path(path)
+    for _member, stream in _open_text(path):
+        head = stream.read(8192)
+        stream.seek(0)
+        if not head.lstrip().startswith(("[", "{")):
+            # Flat file: the ordinary column mapping already handles it.
+            for row in iter_rows(path, BOARD_COLUMNS):
+                yield row
+            return
+        try:
+            payload = json.load(stream)
+        except json.JSONDecodeError:
+            continue
+        records = payload if isinstance(payload, list) else next(
+            (v for v in payload.values() if isinstance(v, list)), [])
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            code = _first_matching(record, _CODE_HINTS)
+            if not code:
+                continue
+            found_nested = False
+            for people in _person_lists(record):
+                for person in people:
+                    if not isinstance(person, dict):
+                        continue
+                    name = _first_matching(person, _PERSON_NAME_HINTS)
+                    if not name:
+                        continue
+                    found_nested = True
+                    # An end date means the person has left the board.
+                    ended = _first_matching(person, ("kehtivuse_lopp",
+                                                     "end_date", "lopp_kpv",
+                                                     "loppemise"))
+                    if ended:
+                        continue
+                    yield {"registrikood": str(code),
+                           "person_name": str(name),
+                           "role": str(_first_matching(person, _PERSON_ROLE_HINTS)
+                                       or "juhatuse liige")}
+            if not found_nested:
+                # Already one row per person.
+                name = _first_matching(record, _PERSON_NAME_HINTS)
+                if name:
+                    yield {"registrikood": str(code), "person_name": str(name),
+                           "role": str(_first_matching(record, _PERSON_ROLE_HINTS)
+                                       or "juhatuse liige")}
+
+
 def is_active(status: str | None) -> bool:
     """Estonian status strings vary by release; anything naming deletion,
     liquidation or bankruptcy is treated as inactive."""
