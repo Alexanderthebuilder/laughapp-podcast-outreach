@@ -86,14 +86,18 @@ def collect(conn, args) -> list[list]:
     """
     out: list[list] = []
     for r in conn.execute(sql).fetchall():
+        # The name and the address are chosen independently, because the row
+        # holding the best name often holds no address at all. A trade
+        # register extract names the managing director and carries no email
+        # for them; the website's contact page carries a working address and
+        # names nobody. Picking one "best contact" and reading both off it
+        # let the named-but-address-less row win and blanked the email for
+        # 115 restaurants that had one.
         contact = conn.execute(
-            f"SELECT * FROM contacts WHERE restaurant_id=? ORDER BY {CONTACT_ORDER}"
-            " LIMIT 1", (r["tableonline_id"],)).fetchone()
-
-        # The best email and the best *name* are not always the same row: a
-        # privacy page can name the owner while only the contact page carries a
-        # working address. Fall back to any named contact for the greeting.
-        named = contact if (contact and contact["contact_name"]) else conn.execute(
+            "SELECT * FROM contacts WHERE restaurant_id=? AND email IS NOT NULL"
+            f" ORDER BY {CONTACT_ORDER} LIMIT 1",
+            (r["tableonline_id"],)).fetchone()
+        named = conn.execute(
             "SELECT * FROM contacts WHERE restaurant_id=? AND contact_name IS NOT NULL"
             f" ORDER BY {CONTACT_ORDER} LIMIT 1", (r["tableonline_id"],)).fetchone()
 

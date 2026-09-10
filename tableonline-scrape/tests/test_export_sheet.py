@@ -63,3 +63,41 @@ def test_harvested_personal_address_is_labelled_personal(sheet):
     aoi = next(r for r in sheet if r["Restaurant"] == "Restaurant Aoi")
     assert aoi["Email type"] == "personal"
     assert aoi["First name"] == "Matti" and aoi["Role"] == "owner"
+
+
+def test_a_named_contact_without_an_address_does_not_blank_the_email(tmp_path):
+    """A trade register extract names the managing director and carries no
+    email for them. Reading the name and the address off one "best contact"
+    let that row win and emptied the email column for restaurants that had
+    a perfectly good address on another row."""
+    import src.export_sheet as ex
+    from lib.db import connect, init_db, now
+
+    db = tmp_path / "t.sqlite"
+    conn = connect(str(db))
+    init_db(conn)
+    conn.execute("INSERT INTO restaurants (tableonline_id, name, country, city)"
+                 " VALUES (1,'Testi','FI','Helsinki')")
+    # Ranks first: has a name, high confidence — and no address.
+    conn.execute(
+        "INSERT INTO contacts (restaurant_id, contact_name, contact_role,"
+        " source, confidence, dedupe_key, found_at)"
+        " VALUES (1,'Matti Virtanen','managing director','registry_fi',"
+        "'high','virre:Matti Virtanen',?)", (now(),))
+    # Ranks second: no name, lower confidence — and the working address.
+    conn.execute(
+        "INSERT INTO contacts (restaurant_id, email, source, confidence,"
+        " dedupe_key, found_at)"
+        " VALUES (1,'info@testi.fi','website_contact','medium','info@testi.fi',?)",
+        (now(),))
+    conn.commit()
+    conn.close()
+
+    ex.main(["--db", str(db), "--name", "sheet_both"])
+    path = Path(__file__).resolve().parent.parent / "exports" / "sheet_both.csv"
+    row = list(csv.DictReader(path.read_text(encoding="utf-8-sig").splitlines()))[0]
+
+    assert row["Email"] == "info@testi.fi"       # taken from the second row
+    assert row["First name"] == "Matti"          # name still from the first
+    assert row["Full name"] == "Matti Virtanen"
+    assert row["Role"] == "managing director"
