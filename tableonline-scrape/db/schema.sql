@@ -297,6 +297,19 @@ CREATE TABLE IF NOT EXISTS pipedrive_fields (
     PRIMARY KEY (entity, our_name)
 );
 
+-- Cached model verdicts on whether a harvested string is a person's name.
+-- Keyed by the normalised name so a re-run costs nothing for names already
+-- judged, and so one verdict covers every restaurant the name appeared at.
+CREATE TABLE IF NOT EXISTS name_verdicts (
+    name_norm           TEXT PRIMARY KEY,
+    name                TEXT,
+    is_person           INTEGER,           -- 1 = a human name, 0 = not
+    confidence          TEXT,              -- high | medium | low
+    reason              TEXT,
+    model               TEXT,
+    checked_at          TEXT
+);
+
 CREATE TABLE IF NOT EXISTS run_log (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     phase               TEXT,
