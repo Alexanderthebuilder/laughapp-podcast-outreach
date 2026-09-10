@@ -209,3 +209,32 @@ def test_dumping_covers_every_name_not_just_the_ones_in_the_sheet(conn, tmp_path
     assert "Matti Virtanen" not in remaining      # already judged
     assert "Aukioloajat Ma" in remaining          # the promoted replacement
     assert "Karjalan Piirakka" in remaining
+
+
+def test_audit_samples_only_accepted_names(tmp_path, capsys):
+    """The run log shows every rejection and no acceptance, which is backwards:
+    a wrong acceptance is what reaches the greeting line."""
+    from lib.db import connect, init_db, now
+    from src import ai_review_names as ai
+
+    db = tmp_path / "t.sqlite"
+    conn = connect(str(db))
+    init_db(conn)
+    conn.execute("INSERT INTO restaurants (tableonline_id, name) VALUES (1, 'Testi')")
+    for name, is_person in [("Matti Virtanen", 1), ("Aukioloajat Ma", 0)]:
+        conn.execute(
+            "INSERT INTO contacts (restaurant_id, contact_name, source,"
+            " confidence, dedupe_key, found_at) VALUES (1,?,?,?,?,?)",
+            (name, "website_other", "medium", f"k-{name}", now()))
+        conn.execute(
+            "INSERT INTO name_verdicts (name_norm, name, is_person, confidence,"
+            " reason, checked_at) VALUES (?,?,?,?,?,?)",
+            (name.lower(), name, is_person, "high", "test", now()))
+    conn.commit()
+    conn.close()
+
+    ai.main(["--db", str(db), "--audit", "10"])
+    out = capsys.readouterr().out
+    assert "Matti Virtanen" in out
+    assert "Aukioloajat Ma" not in out       # rejected, so never sampled
+    assert "1 sampled of 1 accepted" in out

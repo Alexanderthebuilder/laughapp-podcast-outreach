@@ -26,6 +26,7 @@ Roughly 800 distinct names cost well under a dollar.
   python -m src.ai_review_names --apply        # clear the rejected names
   python -m src.ai_review_names --import f.csv --apply   # load verdicts judged
                                                          # elsewhere, then apply
+  python -m src.ai_review_names --audit 40     # sample the ACCEPTED names
 """
 from __future__ import annotations
 
@@ -252,6 +253,10 @@ def apply_verdicts(conn) -> tuple[int, int]:
     return cleared, rewritten
 
 
+def _one_count(conn, sql: str) -> int:
+    return conn.execute(sql).fetchone()[0]
+
+
 def main(argv=None) -> None:
     p = base_parser(__doc__)
     p.add_argument("--apply", action="store_true",
@@ -263,12 +268,42 @@ def main(argv=None) -> None:
     p.add_argument("--model", default=MODEL)
     p.add_argument("--import", dest="import_csv", metavar="FILE",
                    help="load verdicts from a CSV instead of calling the API")
+    p.add_argument("--audit", type=int, metavar="N", nargs="?", const=40,
+                   help="print a random sample of names judged to be PEOPLE, "
+                        "with the evidence, to eyeball precision")
     p.add_argument("--dump-unjudged", metavar="FILE",
                    help="write the names still lacking a verdict, with their "
                         "evidence, for judging elsewhere")
     args = p.parse_args(argv)
 
     conn = open_db(args)
+
+    if args.audit:
+        # Rejections scroll past during the run; acceptances do not, and an
+        # acceptance is the expensive error — it reaches the greeting line.
+        # Sampling only names that actually reach the sheet, because a verdict
+        # on a name buried behind a better contact costs nothing either way.
+        rows = conn.execute("""
+            SELECT v.name, v.cleaned_name, v.confidence, v.reason,
+                   c.contact_role, c.email, c.source, r.name AS restaurant
+              FROM name_verdicts v
+              JOIN contacts c ON c.contact_name = v.name
+              JOIN restaurants r ON r.tableonline_id = c.restaurant_id
+             WHERE v.is_person = 1
+             GROUP BY v.name
+             ORDER BY RANDOM() LIMIT ?""", (args.audit,)).fetchall()
+        for row in rows:
+            shown = row["cleaned_name"] or row["name"]
+            print(f"{shown:28s} {row['confidence'] or '?':6s} "
+                  f"{(row['email'] or '-')[:34]:34s} {row['restaurant'][:24]}")
+            if (row["cleaned_name"] or "").lower() != row["name"].lower():
+                print(f"{'':28s} was: {row['name']}")
+        people = _one_count(conn, "SELECT COUNT(*) FROM name_verdicts WHERE is_person=1")
+        total = _one_count(conn, "SELECT COUNT(*) FROM name_verdicts")
+        print(f"\n{len(rows)} sampled of {people} accepted "
+              f"({total - people} rejected, {total} judged).")
+        print("Any junk in this list is junk that reaches the greeting line.")
+        return
 
     if args.dump_unjudged:
         import csv as _csv
