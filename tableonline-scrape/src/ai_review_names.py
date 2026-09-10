@@ -317,12 +317,15 @@ def main(argv=None) -> None:
 
     if args.estimate or not todo:
         batches = (len(todo) + BATCH - 1) // BATCH
-        # Opus 5: $5/MTok in, $25/MTok out. ~35 tokens in and ~35 out per name,
-        # plus the system prompt once per batch.
-        cost = (len(todo) * 35 + batches * 400) / 1e6 * 5 \
-             + (len(todo) * 35) / 1e6 * 25
+        # Opus 5: $5/MTok in, $25/MTok out. ~35 tokens in per name, plus the
+        # system prompt once per batch. Output is dominated by thinking, which
+        # is on by default on this model and billed as output: measured runs
+        # land around 150-300 tokens per name including the verdict itself.
+        tokens_in = len(todo) * 35 + batches * 400
+        low = tokens_in / 1e6 * 5 + (len(todo) * 150) / 1e6 * 25
+        high = tokens_in / 1e6 * 5 + (len(todo) * 300) / 1e6 * 25
         print(f"{len(todo)} names to judge in {batches} request(s)")
-        print(f"rough cost: ${cost:.2f} on {args.model}")
+        print(f"rough cost: ${low:.2f} to ${high:.2f} on {args.model}")
         already = conn.execute("SELECT COUNT(*) FROM name_verdicts").fetchone()[0]
         print(f"{already} names already have a cached verdict")
         if args.estimate or not todo:
@@ -344,15 +347,25 @@ def main(argv=None) -> None:
 
     for start in range(0, len(todo), BATCH):
         chunk = todo[start:start + BATCH]
-        response = client.messages.create(
+        # Streamed because the model thinks before answering, and thinking
+        # counts against max_tokens: a batch can run minutes, past the
+        # non-streaming HTTP timeout.
+        with client.messages.stream(
             model=args.model,
-            max_tokens=16000,
+            max_tokens=32000,
             system=SYSTEM,
             messages=[{"role": "user", "content":
                        "Classify each string.\n\n" + _payload(chunk)}],
             output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
-        )
+        ) as stream:
+            response = stream.get_final_message()
         text = "".join(b.text for b in response.content if b.type == "text")
+        if response.stop_reason != "end_turn":
+            # Every earlier batch is already committed, and candidates() skips
+            # what is judged, so re-running resumes here rather than restarting.
+            print(f"  batch stopped on {response.stop_reason}, not judged. "
+                  f"Re-run to retry it.", file=sys.stderr)
+            continue
         verdicts = json.loads(text)["verdicts"]
 
         for v in verdicts:
