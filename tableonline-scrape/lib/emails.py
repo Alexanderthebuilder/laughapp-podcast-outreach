@@ -142,6 +142,25 @@ NON_NAME_TOKENS = {
     "bookings", "reservation", "reservations", "table", "online", "gift",
     "card", "hotel", "opening", "hours", "address", "email", "phone",
     "welcome", "home", "news", "blog", "shop", "order", "delivery",
+    # Social platforms and share widgets — these turned up as "names" in a
+    # live run, because a capitalised link label looks exactly like a surname.
+    "facebook", "instagram", "twitter", "linkedin", "youtube", "tiktok",
+    "whatsapp", "pinterest", "snapchat", "telegram", "messenger", "share",
+    "follow", "like", "subscribe", "newsletter", "tripadvisor", "yelp",
+    "wolt", "foodora", "resmio", "quandoo", "tableonline", "opentable",
+    # Site furniture and commerce words
+    "giftcard", "giftcards", "lahjakortti", "lahjakortit", "kinkekaart",
+    "kinkekaardid", "voucher", "vouchers", "takeaway", "catering",
+    "lunch", "dinner", "brunch", "breakfast", "buffet", "lounas",
+    "gallery", "photos", "images", "video", "press", "calendar", "map",
+    "directions", "parking", "allergens", "allergy", "vegan", "vegetarian",
+    "gluten", "wine", "beer", "cocktail", "cocktails", "drinks", "bar",
+    "kitchen", "chef", "staff", "search", "login", "register", "account",
+    "basket", "cart", "checkout", "back", "next", "previous", "close",
+    "open", "closed", "today", "tomorrow", "week", "weekend", "season",
+    "summer", "winter", "spring", "autumn", "christmas", "joulu", "uusi",
+    "vuosi", "year", "happy", "hour", "sitemap", "language", "english",
+    "suomi", "svenska", "eesti",
 }
 
 # Words that look like names by shape but are not people.
