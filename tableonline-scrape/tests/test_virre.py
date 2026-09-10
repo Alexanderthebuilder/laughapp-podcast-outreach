@@ -144,3 +144,56 @@ def test_only_a_real_pdf_is_saved(tmp_path):
 
     assert save_pdf(bad, b"<!doctype html><html>error</html>") is False
     assert not bad.exists()
+
+
+def _group_db(tmp_path):
+    """One company running five restaurants — the shape that broke both ends."""
+    from lib.db import connect, init_db, now
+    conn = connect(str(tmp_path / "t.sqlite"))
+    init_db(conn)
+    for rid in range(1, 6):
+        conn.execute("INSERT INTO restaurants (tableonline_id, name)"
+                     " VALUES (?,?)", (rid, f"Group venue {rid}"))
+        conn.execute(
+            "INSERT INTO business_ids (restaurant_id, business_id, country,"
+            " confidence, found_at) VALUES (?,?,?,?,?)",
+            (rid, "2854694-5", "FI", "checksum_valid", now()))
+    conn.execute("INSERT INTO restaurants (tableonline_id, name) VALUES (9,'Solo')")
+    conn.execute(
+        "INSERT INTO business_ids (restaurant_id, business_id, country,"
+        " confidence, found_at) VALUES (9,'1234567-8','FI','checksum_valid',?)",
+        (now(),))
+    conn.commit()
+    return conn
+
+
+def test_a_group_is_fetched_once_not_once_per_venue(tmp_path, monkeypatch):
+    """Five venues under one Y-tunnus asked PRH for the same document five
+    times and wrote it to the same file, which defeats pacing the requests."""
+    from src import phase5_virre
+
+    monkeypatch.setattr(phase5_virre, "PDF_DIR", tmp_path / "pdfs")
+    todo = phase5_virre.pending(_group_db(tmp_path), None)
+    assert todo == ["1234567-8", "2854694-5"]
+
+
+def test_an_extract_reaches_every_venue_in_the_group(tmp_path):
+    """The owner an extract names is the contact for all of that group's
+    venues. A dict keyed business_id -> restaurant_id keeps one and silently
+    drops the other four."""
+    from src.phase5_virre import restaurants_by_business_id
+
+    got = restaurants_by_business_id(_group_db(tmp_path))
+    assert sorted(got["2854694-5"]) == [1, 2, 3, 4, 5]
+    assert got["1234567-8"] == [9]
+
+
+def test_an_already_fetched_extract_is_not_fetched_again(tmp_path, monkeypatch):
+    from src import phase5_virre
+
+    pdfs = tmp_path / "pdfs"
+    pdfs.mkdir()
+    (pdfs / "2854694-5.pdf").write_bytes(b"%PDF-1.7")
+    monkeypatch.setattr(phase5_virre, "PDF_DIR", pdfs)
+
+    assert phase5_virre.pending(_group_db(tmp_path), None) == ["1234567-8"]

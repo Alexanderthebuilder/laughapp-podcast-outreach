@@ -41,15 +41,35 @@ EXTRACT_LINK = re.compile(r"kaupparekisteriote|trade register extract", re.I)
 DELAY_S = 3.0
 
 
-def pending(conn, limit: int | None) -> list[tuple[int, str]]:
-    """Finnish business IDs with no extract on disk yet."""
+def pending(conn, limit: int | None) -> list[str]:
+    """Finnish business IDs with no extract on disk yet, each one once.
+
+    A restaurant group files under a single company: five venues, one
+    Y-tunnus, one extract. Selecting restaurant and business ID together
+    asked PRH for the same document five times and wrote it to the same
+    file — which defeats the point of pacing the requests at all.
+    """
     rows = conn.execute(
-        "SELECT DISTINCT b.restaurant_id, b.business_id FROM business_ids b"
+        "SELECT DISTINCT b.business_id FROM business_ids b"
         " WHERE b.country='FI' AND b.confidence='checksum_valid'"
-        " ORDER BY b.restaurant_id").fetchall()
-    todo = [(r["restaurant_id"], r["business_id"]) for r in rows
+        " ORDER BY b.business_id").fetchall()
+    todo = [r["business_id"] for r in rows
             if not (PDF_DIR / f"{r['business_id']}.pdf").exists()]
     return todo[:limit] if limit else todo
+
+
+def restaurants_by_business_id(conn) -> dict[str, list[int]]:
+    """Every restaurant filed under each Y-tunnus.
+
+    One company to many restaurants, never one to one: the group owner an
+    extract names is the contact for all of that group's venues, and a dict
+    keyed the obvious way silently drops all but one of them.
+    """
+    out: dict[str, list[int]] = {}
+    for row in conn.execute("SELECT business_id, restaurant_id FROM business_ids"
+                            " WHERE country='FI'"):
+        out.setdefault(row["business_id"], []).append(row["restaurant_id"])
+    return out
 
 
 # Read the object URL back as base64 from the page that created it. A blob
@@ -140,7 +160,7 @@ def fetch(conn, limit: int | None, headed: bool = False,
 
         context.on("response", capture)
 
-        for i, (rid, bid) in enumerate(todo, 1):
+        for i, bid in enumerate(todo, 1):
             body.clear()
             seen.clear()
             blobs.clear()
@@ -206,16 +226,15 @@ def parse(conn, limit: int | None) -> None:
         print("pip install -r requirements.txt", file=sys.stderr)
         raise SystemExit(2)
 
-    by_bid = {r["business_id"]: r["restaurant_id"] for r in conn.execute(
-        "SELECT business_id, restaurant_id FROM business_ids"
-        " WHERE country='FI'")}
+    by_bid = restaurants_by_business_id(conn)
 
     files = sorted(PDF_DIR.glob("*.pdf"))[:limit or None]
-    people = mails = 0
+    people = mails = venues = 0
     for path in files:
-        rid = by_bid.get(path.stem)
-        if rid is None:
+        rids = by_bid.get(path.stem)
+        if not rids:
             continue
+        venues += len(rids)
         try:
             text = "\n".join((p.extract_text() or "")
                              for p in PdfReader(str(path)).pages)
@@ -224,28 +243,31 @@ def parse(conn, limit: int | None) -> None:
             continue
         extract = parse_extract(text)
 
-        for officer in extract["officers"]:
-            upsert(conn, "contacts",
-                   {"restaurant_id": rid, "dedupe_key": f"virre:{officer.name}"},
-                   {"contact_name": officer.name,
-                    "contact_role": ROLE_LABEL[officer.role],
-                    "source": "registry_fi", "source_url": COMPANY.format(path.stem),
-                    # Filed with the register and signed off by the company,
-                    # which is a stronger claim than anything scraped.
-                    "confidence": "high", "found_at": now()})
-            people += 1
+        for rid in rids:
+            for officer in extract["officers"]:
+                upsert(conn, "contacts",
+                       {"restaurant_id": rid,
+                        "dedupe_key": f"virre:{officer.name}"},
+                       {"contact_name": officer.name,
+                        "contact_role": ROLE_LABEL[officer.role],
+                        "source": "registry_fi",
+                        "source_url": COMPANY.format(path.stem),
+                        # Filed with the register and signed off by the
+                        # company, a stronger claim than anything scraped.
+                        "confidence": "high", "found_at": now()})
+                people += 1
 
-        if extract.get("email"):
-            upsert(conn, "contacts",
-                   {"restaurant_id": rid, "dedupe_key": extract["email"]},
-                   {"email": extract["email"], "source": "registry_fi",
-                    "source_url": COMPANY.format(path.stem),
-                    "confidence": "high", "found_at": now()})
-            mails += 1
+            if extract.get("email"):
+                upsert(conn, "contacts",
+                       {"restaurant_id": rid, "dedupe_key": extract["email"]},
+                       {"email": extract["email"], "source": "registry_fi",
+                        "source_url": COMPANY.format(path.stem),
+                        "confidence": "high", "found_at": now()})
+                mails += 1
         conn.commit()
 
-    print(f"{len(files)} extracts read: {people} officers, "
-          f"{mails} registered addresses.")
+    print(f"{len(files)} extracts read across {venues} restaurants: "
+          f"{people} officer rows, {mails} registered addresses.")
     print("Re-run `python -m src.export_sheet` to rebuild the sheet.")
 
 
