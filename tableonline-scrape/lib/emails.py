@@ -11,11 +11,15 @@ vendor domains are the bulk of the false positives on small restaurant sites.
 """
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from urllib.parse import unquote, urlsplit
 
 from .normalise import strip_diacritics
+
+# The address our own User-Agent advertises, so it is never collected.
+CONTACT = os.environ.get("CRAWL_CONTACT_EMAIL", "alex@letsumai.com")
 
 EMAIL_RE = re.compile(
     r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,24}\b")
@@ -216,6 +220,11 @@ def decode_cfemail(hexstr: str) -> str | None:
 def is_plausible_email(addr: str) -> bool:
     addr = (addr or "").strip().strip(".,;:!?)(<>\"'").lower()
     if not addr or not EMAIL_RE.fullmatch(addr):
+        return False
+    # Our own crawler address. Politeness requires putting a contact address in
+    # the User-Agent, and some sites echo that header back into the page — so
+    # it gets harvested as a lead, and appeared twice in a live run.
+    if addr == (CONTACT or "").strip().lower():
         return False
     if RETINA_RE.search(addr) or ASSET_RE.search(addr):
         return False
