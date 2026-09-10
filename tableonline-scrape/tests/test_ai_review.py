@@ -133,3 +133,57 @@ def test_a_shared_inbox_is_never_given_a_name(conn):
     fill_names_from_emails(conn)
     assert conn.execute("SELECT contact_name FROM contacts WHERE email=?",
                         ("info@aoi.fi",)).fetchone()[0] is None
+
+
+# --- importing verdicts judged elsewhere ------------------------------------
+
+def _write_csv(tmp_path, rows):
+    import csv
+    path = tmp_path / "verdicts.csv"
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["harvested_string", "is_person", "cleaned_name", "reason"])
+        w.writerows(rows)
+    return str(path)
+
+
+def test_importing_verdicts_matches_what_the_api_would_store(conn, tmp_path):
+    from src.ai_review_names import import_verdicts
+    loaded, skipped = import_verdicts(conn, _write_csv(tmp_path, [
+        ["Karjalan Piirakka", 0, "", "a pastry"],
+        ["Matti Virtanen", 1, "Matti Virtanen", "person"],
+    ]))
+    assert (loaded, skipped) == (2, 0)
+    rows = {r["name"]: r for r in conn.execute(
+        "SELECT name, is_person, cleaned_name FROM name_verdicts")}
+    assert rows["Karjalan Piirakka"]["is_person"] == 0
+    assert rows["Matti Virtanen"]["cleaned_name"] == "Matti Virtanen"
+
+
+def test_imported_verdicts_drive_the_same_apply_path(conn, tmp_path):
+    from src.ai_review_names import import_verdicts
+    import_verdicts(conn, _write_csv(tmp_path, [
+        ["Karjalan Piirakka", 0, "", "a pastry"],
+    ]))
+    cleared, rewritten = apply_verdicts(conn)
+    assert (cleared, rewritten) == (1, 0)
+
+
+def test_boolean_spellings_are_accepted(conn, tmp_path):
+    from src.ai_review_names import import_verdicts
+    import_verdicts(conn, _write_csv(tmp_path, [
+        ["Matti Virtanen", "true", "Matti Virtanen", ""],
+        ["Karjalan Piirakka", "0", "", ""],
+        ["Pekka Salo", "yes", "Pekka Salo", ""],
+    ]))
+    people = {r[0] for r in conn.execute(
+        "SELECT name FROM name_verdicts WHERE is_person=1")}
+    assert people == {"Matti Virtanen", "Pekka Salo"}
+
+
+def test_blank_rows_are_skipped_not_stored(conn, tmp_path):
+    from src.ai_review_names import import_verdicts
+    loaded, skipped = import_verdicts(conn, _write_csv(tmp_path, [
+        ["", 1, "", ""], ["Matti Virtanen", 1, "Matti Virtanen", ""],
+    ]))
+    assert (loaded, skipped) == (1, 1)

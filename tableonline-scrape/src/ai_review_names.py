@@ -24,6 +24,8 @@ Roughly 800 distinct names cost well under a dollar.
   python -m src.ai_review_names --estimate     # what it will cost, no calls
   python -m src.ai_review_names                # judge, store verdicts
   python -m src.ai_review_names --apply        # clear the rejected names
+  python -m src.ai_review_names --import f.csv --apply   # load verdicts judged
+                                                         # elsewhere, then apply
 """
 from __future__ import annotations
 
@@ -167,6 +169,39 @@ def candidates(conn, recheck: bool):
     return out
 
 
+def import_verdicts(conn, path: str) -> tuple[int, int]:
+    """Load verdicts from a CSV instead of calling the API.
+
+    Columns: harvested_string, is_person, cleaned_name, reason. Lets a
+    judgement made elsewhere be applied here without re-spending, and makes the
+    decisions reviewable as a file before anything in the database changes.
+    Returns (loaded, skipped).
+    """
+    import csv as _csv
+
+    loaded = skipped = 0
+    with open(path, newline="", encoding="utf-8-sig") as fh:
+        for row in _csv.DictReader(fh):
+            name = (row.get("harvested_string") or "").strip()
+            key = normalise_name(name)
+            if not name or not key:
+                skipped += 1
+                continue
+            raw = str(row.get("is_person", "")).strip().lower()
+            is_person = raw in ("1", "true", "yes", "y")
+            upsert(conn, "name_verdicts", {"name_norm": key}, {
+                "name": name,
+                "is_person": 1 if is_person else 0,
+                "cleaned_name": (row.get("cleaned_name") or "").strip() or None,
+                "confidence": (row.get("confidence") or "high").strip(),
+                "reason": (row.get("reason") or "").strip() or None,
+                "model": (row.get("model") or "imported").strip(),
+                "checked_at": now()})
+            loaded += 1
+    conn.commit()
+    return loaded, skipped
+
+
 def fill_names_from_emails(conn) -> int:
     """Give a name to rows that have none, from the address itself.
 
@@ -226,9 +261,31 @@ def main(argv=None) -> None:
     p.add_argument("--recheck", action="store_true",
                    help="re-judge names that already have a verdict")
     p.add_argument("--model", default=MODEL)
+    p.add_argument("--import", dest="import_csv", metavar="FILE",
+                   help="load verdicts from a CSV instead of calling the API")
     args = p.parse_args(argv)
 
     conn = open_db(args)
+
+    if args.import_csv:
+        loaded, skipped = import_verdicts(conn, args.import_csv)
+        print(f"imported {loaded} verdicts from {args.import_csv}"
+              + (f" ({skipped} rows skipped)" if skipped else ""))
+        people = conn.execute("SELECT COUNT(*) FROM name_verdicts"
+                              " WHERE is_person=1").fetchone()[0]
+        print(f"  {people} judged people, {loaded - people} judged not people")
+        if not args.apply:
+            print("\nNothing changed. Add --apply to act on them.")
+            return
+        cleared, rewritten = apply_verdicts(conn)
+        filled = fill_names_from_emails(conn)
+        remaining = conn.execute("SELECT COUNT(*) FROM contacts"
+                                 " WHERE contact_name IS NOT NULL").fetchone()[0]
+        print(f"\ncleared {cleared} rows, rewrote {rewritten}, "
+              f"recovered {filled} from addresses")
+        print(f"{remaining} named contacts remain.")
+        print("Re-run `python -m src.export_sheet` to rebuild the sheet.")
+        return
     todo = candidates(conn, args.recheck)
     if args.limit:
         todo = todo[:args.limit]
