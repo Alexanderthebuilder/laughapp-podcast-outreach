@@ -12,6 +12,9 @@ playwright==1.49.1
 # Tests
 pytest==8.3.4
 
+# Trade register extracts (src/phase5_virre.py parse). Imported lazily.
+pypdf==6.18.0
+
 # Name judging (src/ai_review_names.py). Imported lazily — the crawl phases
 # run without it, but --import-less judging needs it.
 anthropic==1.4.0
