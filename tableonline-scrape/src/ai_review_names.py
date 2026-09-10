@@ -45,6 +45,13 @@ A person's name is true. Everything else is false, including:
 - job titles on their own, with no name attached
 - a single word with no surname
 
+A name at several restaurants is usually site furniture — but it is also \
+exactly what the owner of a restaurant group looks like, and those are the \
+most valuable contacts here. Judge the string itself: a plausible forename \
+and surname across six venues is a group owner and is true; "Gift Cards" \
+across six venues is not. Where the note says the venues share one registered \
+company, that is strong evidence of a real owner.
+
 Finnish and Estonian names are frequently ordinary nouns — Salo is a grove, \
 Tamm an oak, Kask a birch, Nurmi a meadow, Koski a rapid. As a surname beside \
 a plausible forename these are people, and must be true. Judge the whole \
