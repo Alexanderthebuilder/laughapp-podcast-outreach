@@ -67,3 +67,38 @@ def test_unjudged_counts_names_the_sheet_never_showed(crawled, capsys):
 
     crawled.execute("DELETE FROM contacts WHERE dedupe_key='unjudged-probe'")
     crawled.commit()
+
+
+def test_off_domain_flags_a_contact_from_another_company(tmp_path):
+    """A real person can still be the wrong person: three teachers at
+    @edu.hel.fi were harvested onto a cooking-school restaurant. The names are
+    fine, so only the domain gives it away."""
+    conn = _empty(tmp_path)
+    conn.execute("INSERT INTO restaurants (tableonline_id, name)"
+                 " VALUES (1, 'Ravintola Kokki')")
+    conn.execute("INSERT INTO websites (restaurant_id, domain, base_url, status)"
+                 " VALUES (1, 'ravintolakokki.fi', 'https://ravintolakokki.fi', 'ok')")
+    for name, email in [("Maiju Karvonen", "maiju.karvonen@edu.hel.fi"),
+                        ("Pekka Kokki", "pekka@ravintolakokki.fi"),
+                        ("Sanna Kokki", "sanna@tilaus.ravintolakokki.fi")]:
+        conn.execute(
+            "INSERT INTO contacts (restaurant_id, contact_name, email, source,"
+            " confidence, dedupe_key, found_at) VALUES (1,?,?,?,?,?,?)",
+            (name, email, "website_other", "medium", email, now()))
+    conn.commit()
+
+    flagged = [r["email"] for r in status.off_domain(conn)]
+    assert flagged == ["maiju.karvonen@edu.hel.fi"]      # subdomain is not a stray
+
+
+def test_off_domain_is_silent_when_there_is_no_website(tmp_path):
+    """No crawled domain means nothing to compare against — not a mismatch."""
+    conn = _empty(tmp_path)
+    conn.execute("INSERT INTO restaurants (tableonline_id, name) VALUES (1, 'X')")
+    conn.execute(
+        "INSERT INTO contacts (restaurant_id, email, source, confidence,"
+        " dedupe_key, found_at) VALUES (1,'a@b.fi','places','medium','k',?)",
+        (now(),))
+    conn.commit()
+
+    assert status.off_domain(conn) == []

@@ -5,6 +5,7 @@ looks identical to one that never ran. This answers "where are we" without
 having to re-derive it from six separate queries.
 
   python -m src.status
+  python -m src.status --domains     # contacts whose address is off-domain
 """
 from __future__ import annotations
 
@@ -82,6 +83,43 @@ def report(conn) -> None:
     print(f"  {ee} Estonian board members loaded"
           + ("" if ee else "  — run `python -m src.phase5_registry ee-load`"))
 
+    stray = len(off_domain(conn))
+    if stray:
+        print(f"\nOFF-DOMAIN  {stray} contacts on a domain other than the "
+              f"restaurant's own site")
+        print("  Some are legitimate (group domains, an owner's Gmail); some "
+              "are the wrong")
+        print("  company entirely. List them with `python -m src.status --domains`.")
+
+
+OFF_DOMAIN_SQL = """
+    SELECT r.name AS restaurant, w.domain AS site,
+           c.contact_name, c.email, c.source
+      FROM contacts c
+      JOIN restaurants r ON r.tableonline_id = c.restaurant_id
+      JOIN websites   w ON w.restaurant_id  = c.restaurant_id
+     WHERE c.email IS NOT NULL AND w.domain IS NOT NULL
+       AND LOWER(SUBSTR(c.email, INSTR(c.email, '@') + 1)) <> LOWER(w.domain)
+       AND LOWER(SUBSTR(c.email, INSTR(c.email, '@') + 1))
+           NOT LIKE '%.' || LOWER(w.domain)
+     ORDER BY r.name
+"""
+
+
+def off_domain(conn) -> list:
+    """Contacts whose address is not on the restaurant's own website domain.
+
+    A real person can still be the wrong person. Three teachers at
+    @edu.hel.fi were harvested onto a cooking-school restaurant: correctly
+    judged as people, useless as leads, and invisible to a name filter
+    because nothing is wrong with the names. The domain is the tell.
+
+    Not every mismatch is bad — a group restaurant legitimately uses the
+    parent company's domain, and a Gmail address is often the actual owner —
+    so this reports rather than deletes.
+    """
+    return conn.execute(OFF_DOMAIN_SQL).fetchall()
+
 
 def _has_column(conn, table: str, column: str) -> bool:
     return any(r[1] == column for r in conn.execute(f"PRAGMA table_info({table})"))
@@ -89,8 +127,17 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 def main(argv=None) -> None:
     p = base_parser(__doc__)
+    p.add_argument("--domains", action="store_true",
+                   help="list contacts whose email domain is not the "
+                        "restaurant's own website domain")
     args = p.parse_args(argv)
-    report(open_db(args))
+    conn = open_db(args)
+    if args.domains:
+        for row in off_domain(conn):
+            print(f"{(row['restaurant'] or '')[:26]:26s} site={row['site'][:22]:22s} "
+                  f"{(row['contact_name'] or '-')[:20]:20s} {row['email']}")
+        return
+    report(conn)
 
 
 if __name__ == "__main__":
