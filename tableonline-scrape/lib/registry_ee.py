@@ -214,6 +214,18 @@ def normalise_company(row: dict) -> dict | None:
     }
 
 
+# Estonian and Finnish legal forms. A board member carrying one of these is a
+# company, not someone to write to.
+_LEGAL_FORM_TOKENS = {"ou", "oü", "as", "mtu", "mtü", "uu", "uü", "tu", "tü",
+                      "fie", "sa", "kü", "ky", "oy", "ab", "ltd", "gmbh",
+                      "oyj", "plc", "inc"}
+
+
+def _is_legal_entity(name: str) -> bool:
+    tokens = {strip_diacritics(t).lower().strip(".,") for t in name.split()}
+    return bool(tokens & {strip_diacritics(t).lower() for t in _LEGAL_FORM_TOKENS})
+
+
 def normalise_board_member(row: dict) -> dict | None:
     code = re.sub(r"\D", "", str(row.get("registrikood") or ""))
     if len(code) != 8:
@@ -224,7 +236,9 @@ def normalise_board_member(row: dict) -> dict | None:
         last = (row.get("last_name") or "").strip()
         name = f"{first} {last}".strip()
     if not name or len(name.split()) < 2:
-        return None      # a company acting as board member, or a masked entry
+        return None      # a masked entry, or a single-word placeholder
+    if _is_legal_entity(name):
+        return None      # a company sitting on the board, not a person
     role = (row.get("role") or "").strip() or "juhatuse liige"
     return {"registrikood": code, "person_name": name, "role": role}
 
@@ -313,6 +327,93 @@ def iter_person_rows(path) -> Iterator[dict]:
                     yield {"registrikood": str(code), "person_name": str(name),
                            "role": str(_first_matching(record, _PERSON_ROLE_HINTS)
                                        or "juhatuse liige")}
+
+
+def looks_like_xml(path) -> bool:
+    path = Path(path)
+    if path.suffix.lower() == ".xml":
+        return True
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(200).lstrip().startswith(b"<?xml")
+    except OSError:
+        return False
+
+
+def has_nested_people(path) -> bool:
+    """True when the file is JSON whose records nest a list of people.
+
+    This is the shape that identifies "Persons on registry card". Testing for
+    a column mapping instead is ambiguous: the company file also carries a
+    registry code and a name, so it matches the person mapping too.
+    """
+    path = Path(path)
+    try:
+        for _member, stream in _open_text(path):
+            head = stream.read(4096)
+            stream.seek(0)
+            if not head.lstrip().startswith(("[", "{")):
+                return False
+            payload = json.load(stream)
+            records = payload if isinstance(payload, list) else next(
+                (v for v in payload.values() if isinstance(v, list)), [])
+            for record in records[:50]:
+                if isinstance(record, dict) and any(_person_lists(record)):
+                    return True
+            return False
+    except (OSError, json.JSONDecodeError, StopIteration):
+        return False
+    return False
+
+
+def discover(directory) -> dict:
+    """Work out which downloaded file is which, by reading them.
+
+    The register's filenames vary, and asking a caller to type them invites
+    the shell to swallow angle brackets. Each candidate is classified by its
+    structure: nested person lists mean the board file, a registry code plus a
+    company name means the basic-data file.
+    """
+    directory = Path(directory)
+    found: dict = {"companies": None, "board": None, "xml": [], "unknown": []}
+    if not directory.is_dir():
+        return found
+
+    for path in sorted(directory.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in (
+                ".csv", ".json", ".zip", ".xml"):
+            continue
+        if looks_like_xml(path):
+            found["xml"].append(path)
+            continue
+
+        if found["board"] is None and has_nested_people(path):
+            found["board"] = path
+            continue
+
+        try:
+            companies = sum(1 for row, _ in zip(iter_rows(path, COMPANY_COLUMNS),
+                                                range(5))
+                            if normalise_company(row))
+        except Exception:  # noqa: BLE001 — wrong shape
+            companies = 0
+        if companies >= 3 and found["companies"] is None:
+            found["companies"] = path
+            continue
+
+        # A flat person list, which a future CSV release would produce.
+        try:
+            people = sum(1 for row, _ in zip(iter_rows(path, BOARD_COLUMNS),
+                                             range(5))
+                         if normalise_board_member(row))
+        except Exception:  # noqa: BLE001
+            people = 0
+        if people >= 3 and found["board"] is None:
+            found["board"] = path
+            continue
+
+        found["unknown"].append(path)
+    return found
 
 
 def is_active(status: str | None) -> bool:

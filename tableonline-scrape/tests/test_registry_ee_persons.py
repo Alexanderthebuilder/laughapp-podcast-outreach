@@ -83,3 +83,58 @@ def test_a_record_with_no_registry_code_is_skipped(tmp_path):
                                   {"nimi_arinimi": "Someone"}]}]),
                  encoding="utf-8")
     assert list(iter_person_rows(p)) == []
+
+
+# --- working out which downloaded file is which -----------------------------
+
+@pytest.fixture()
+def downloads(tmp_path):
+    """What the register's download page actually gives you."""
+    (tmp_path / "ettevotja_rekvisiidid.csv").write_text(
+        "ariregistri_kood;nimi;ettevotja_staatus_tekstina;indeks\n"
+        + "".join(f"1234567{i};Firma {i} OÜ;Registrisse kantud;1014{i}\n"
+                 for i in range(5)), encoding="utf-8")
+    (tmp_path / "kaardile_kantud_isikud.json").write_text(
+        json.dumps(NESTED, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "yldandmed.xml").write_text(
+        '<?xml version="1.0"?><root/>', encoding="utf-8")
+    (tmp_path / "notes.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    return tmp_path
+
+
+def test_the_two_files_are_told_apart(downloads):
+    """Both carry a registry code and a name, so only structure separates
+    them: the board file nests its people."""
+    from lib.registry_ee import discover
+    found = discover(downloads)
+    assert found["companies"].name == "ettevotja_rekvisiidid.csv"
+    assert found["board"].name == "kaardile_kantud_isikud.json"
+
+
+def test_xml_is_reported_rather_than_silently_ignored(downloads):
+    from lib.registry_ee import discover
+    assert [p.name for p in discover(downloads)["xml"]] == ["yldandmed.xml"]
+
+
+def test_an_unrelated_file_is_listed_not_guessed_at(downloads):
+    from lib.registry_ee import discover
+    assert [p.name for p in discover(downloads)["unknown"]] == ["notes.csv"]
+
+
+def test_an_empty_directory_finds_nothing(tmp_path):
+    from lib.registry_ee import discover
+    found = discover(tmp_path)
+    assert found["companies"] is None and found["board"] is None
+
+
+def test_a_company_on_the_board_is_not_a_person():
+    """Legal entities sit on Estonian boards; they are not someone to email."""
+    for name in ["Firma 0 OÜ", "Holding AS", "Ravintola Oy", "Something MTÜ"]:
+        assert normalise_board_member(
+            {"registrikood": "12345678", "person_name": name}) is None
+
+
+def test_a_real_person_still_passes():
+    got = normalise_board_member(
+        {"registrikood": "12345678", "person_name": "Mari Tamm"})
+    assert got["person_name"] == "Mari Tamm"

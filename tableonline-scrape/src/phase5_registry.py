@@ -167,6 +167,27 @@ def cmd_ee_load(args) -> None:
     counts = {"companies": 0, "board_members": 0, "board_contacts": 0,
               "skipped_rows": 0}
 
+    # With no paths given, read whatever is in raw/registry and work out which
+    # file is which by its contents.
+    if not args.companies and not args.board:
+        found = ee.discover(RAW_REGISTRY)
+        args.companies, args.board = found["companies"], found["board"]
+        for path in found["xml"]:
+            print(f"{path.name} is XML, which this loader does not read — "
+                  "download the JSON version of that dataset instead",
+                  file=sys.stderr)
+        for path in found["unknown"]:
+            print(f"{path.name}: could not tell what this is; ignoring")
+        print(f"companies file: {args.companies or 'NOT FOUND'}")
+        print(f"board file:     {args.board or 'NOT FOUND'}")
+        if not args.companies and not args.board:
+            print(f"\nNothing usable in {RAW_REGISTRY}. Download 'Basic data' "
+                  "as CSV and 'Persons on registry card' as JSON from "
+                  "https://avaandmed.ariregister.rik.ee and put them there.",
+                  file=sys.stderr)
+            finish_run(conn, run_id, False, counts, "no input files")
+            raise SystemExit(1)
+
     if args.companies:
         for row in ee.iter_rows(args.companies, ee.COMPANY_COLUMNS):
             norm = ee.normalise_company(row)
@@ -422,8 +443,10 @@ def main(argv=None) -> None:
     fl = sub.add_parser("fi-load", help="stream the dump into companies_fi")
     fl.add_argument("--file", help="path to the zip or decompressed JSON")
     el = sub.add_parser("ee-load", help="load Estonian bulk files")
-    el.add_argument("--companies", help="ettevotja_rekvisiidid csv/json/zip")
-    el.add_argument("--board", help="representation / board members file")
+    el.add_argument("--companies",
+                    help="'Basic data' CSV; omit to auto-detect in raw/registry")
+    el.add_argument("--board",
+                    help="'Persons on registry card' JSON; omit to auto-detect")
     sub.add_parser("match", help="join restaurants to both registers")
     sub.add_parser("groups", help="5c group detection")
     args = p.parse_args(argv)
