@@ -5,8 +5,10 @@ looks identical to one that never ran. This answers "where are we" without
 having to re-derive it from six separate queries.
 
   python -m src.status
-  python -m src.status --domains       # off-domain contacts, grouped by domain
+  python -m src.status --domains       # off-domain addresses that reach the
+                                       # sheet, grouped by domain
   python -m src.status --domains --all # every one of them, one per line
+  python -m src.status --domains --every-contact   # not just the sheet's
 """
 from __future__ import annotations
 
@@ -111,12 +113,29 @@ def report(conn) -> None:
 
     stray = len(off_domain(conn))
     if stray:
-        print(f"\nOFF-DOMAIN  {stray} contacts on a domain other than the "
-              f"restaurant's own site")
-        print("  Some are legitimate (group domains, an owner's Gmail); some "
-              "are the wrong")
-        print("  company entirely. List them with `python -m src.status --domains`.")
+        print(f"\nOFF-DOMAIN  {stray} of the addresses the sheet would send to "
+              f"are not on")
+        print("  the restaurant's own site. Some are legitimate (group "
+              "domains, an owner's")
+        print("  Gmail); some are the wrong company. "
+              "`python -m src.status --domains`.")
 
+
+# Mirrors src/export_sheet.CONTACT_ORDER. The sheet sends to one address per
+# restaurant, so that is the address worth checking; the rest of the contacts
+# table is never mailed and reviewing it is 800 rows of nothing.
+_SHEET_PICK = """
+    c.id = (SELECT c2.id FROM contacts c2
+             WHERE c2.restaurant_id = c.restaurant_id AND c2.email IS NOT NULL
+             ORDER BY CASE WHEN c2.contact_name IS NOT NULL THEN 0 ELSE 1 END,
+                      CASE c2.confidence
+                        WHEN 'verified' THEN 0 WHEN 'high' THEN 1
+                        WHEN 'medium' THEN 2 WHEN 'low' THEN 3
+                        WHEN 'catchall_guess' THEN 4 ELSE 5 END,
+                      CASE WHEN c2.email IS NOT NULL THEN 0 ELSE 1 END,
+                      c2.id
+             LIMIT 1)
+"""
 
 OFF_DOMAIN_SQL = """
     SELECT r.name AS restaurant, w.domain AS site,
@@ -128,11 +147,12 @@ OFF_DOMAIN_SQL = """
        AND LOWER(SUBSTR(c.email, INSTR(c.email, '@') + 1)) <> LOWER(w.domain)
        AND LOWER(SUBSTR(c.email, INSTR(c.email, '@') + 1))
            NOT LIKE '%.' || LOWER(w.domain)
+       {scope}
      ORDER BY r.name
 """
 
 
-def off_domain(conn) -> list:
+def off_domain(conn, every_contact: bool = False) -> list:
     """Contacts whose address is not on the restaurant's own website domain.
 
     A real person can still be the wrong person. Three teachers at
@@ -143,8 +163,12 @@ def off_domain(conn) -> list:
     Not every mismatch is bad — a group restaurant legitimately uses the
     parent company's domain, and a Gmail address is often the actual owner —
     so this reports rather than deletes.
+
+    By default only the address the sheet would send to, because that is the
+    only one anybody receives.
     """
-    return conn.execute(OFF_DOMAIN_SQL).fetchall()
+    scope = "" if every_contact else f"AND {_SHEET_PICK}"
+    return conn.execute(OFF_DOMAIN_SQL.format(scope=scope)).fetchall()
 
 
 def _has_column(conn, table: str, column: str) -> bool:
@@ -158,10 +182,13 @@ def main(argv=None) -> None:
                         "restaurant's own website domain")
     p.add_argument("--all", action="store_true",
                    help="with --domains, print every row instead of a summary")
+    p.add_argument("--every-contact", action="store_true",
+                   help="with --domains, check every contact rather than only "
+                        "the address the sheet would send to")
     args = p.parse_args(argv)
     conn = open_db(args)
     if args.domains:
-        rows = off_domain(conn)
+        rows = off_domain(conn, every_contact=args.every_contact)
         if args.all:
             for row in rows:
                 print(f"{(row['restaurant'] or '')[:26]:26s} "
@@ -179,7 +206,8 @@ def main(argv=None) -> None:
             counts[dom] = counts.get(dom, 0) + 1
             venues.setdefault(dom, set()).add(row["restaurant"])
         ranked = sorted(counts.items(), key=lambda kv: -kv[1])
-        print(f"{len(rows)} off-domain contacts across {len(counts)} domains\n")
+        scope = "contacts" if args.every_contact else "sheet addresses"
+        print(f"{len(rows)} off-domain {scope} across {len(counts)} domains\n")
         for dom, n in ranked[:40]:
             print(f"  {n:4d}  {dom:34s} {len(venues[dom])} restaurant(s)")
         tail = sum(n for _, n in ranked[40:])

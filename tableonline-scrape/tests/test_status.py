@@ -125,10 +125,18 @@ def test_domains_summary_groups_repeats(tmp_path, capsys, monkeypatch):
     conn.commit()
 
     monkeypatch.setattr(status, "open_db", lambda a: conn)
+
+    # By default only the address the sheet would send to. Restaurant 1 has
+    # two off-domain addresses and receives exactly one of them, so counting
+    # both overstates what anybody would actually be mailed.
     status.main(["--domains"])
     out = capsys.readouterr().out
-    assert "4 off-domain contacts across 2 domains" in out
+    assert "3 off-domain sheet addresses across 1 domains" in out
     assert "edu.hel.fi" in out and "3 restaurant(s)" in out
+
+    status.main(["--domains", "--every-contact"])
+    out = capsys.readouterr().out
+    assert "4 off-domain contacts across 2 domains" in out
     assert "gmail.com" in out and "1 restaurant(s)" in out
 
 
