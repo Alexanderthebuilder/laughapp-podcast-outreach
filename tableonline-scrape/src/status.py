@@ -40,7 +40,13 @@ def report(conn) -> None:
 
     print("\nCOVERAGE")
     for label, sql in [
-            ("phone", "SELECT COUNT(*) FROM restaurants WHERE phone IS NOT NULL"),
+            # The phone that reaches the sheet, which prefers the Google
+            # Places number over the one on the listing. Counting
+            # restaurants.phone alone reported 0.5% while the sheet carried
+            # 96%, which reads as catastrophe rather than as a bad metric.
+            ("phone", "SELECT COUNT(*) FROM restaurants r"
+                      " LEFT JOIN places p ON p.restaurant_id = r.tableonline_id"
+                      " WHERE COALESCE(p.international_phone, r.phone) IS NOT NULL"),
             ("address", "SELECT COUNT(*) FROM restaurants"
                         " WHERE street_address IS NOT NULL"),
             ("website", "SELECT COUNT(*) FROM websites WHERE base_url IS NOT NULL"),
@@ -83,6 +89,19 @@ def report(conn) -> None:
     ee = _one(conn, "SELECT COUNT(*) FROM contacts WHERE source='registry_ee'")
     print(f"  {ee} Estonian board members loaded"
           + ("" if ee else "  — run `python -m src.phase5_registry ee-load`"))
+
+    # Estonia loads in two steps and either can silently produce nothing:
+    # the register file may parse to no rows, or the rows may fail to match a
+    # restaurant. One number cannot tell those apart.
+    companies = _one(conn, "SELECT COUNT(*) FROM companies_ee")
+    board = _one(conn, "SELECT COUNT(*) FROM company_board_ee")
+    if companies or board:
+        matched = _one(conn, "SELECT COUNT(*) FROM registry_matches"
+                             " WHERE business_id IN"
+                             " (SELECT registrikood FROM companies_ee)") \
+            if _has_column(conn, "companies_ee", "registrikood") else 0
+        print(f"  {companies} EE companies, {board} board rows, "
+              f"{matched} matched to a restaurant")
 
     stray = len(off_domain(conn))
     if stray:

@@ -50,7 +50,8 @@ def pending(conn, limit: int | None) -> list[tuple[int, str]]:
     return todo[:limit] if limit else todo
 
 
-def fetch(conn, limit: int | None) -> None:
+def fetch(conn, limit: int | None, headed: bool = False,
+          debug: bool = False) -> None:
     from playwright.sync_api import sync_playwright
 
     from lib.consent import dismiss
@@ -65,40 +66,55 @@ def fetch(conn, limit: int | None) -> None:
 
     got = missed = 0
     with sync_playwright() as pw:
-        browser = pw.chromium.launch()
+        browser = pw.chromium.launch(headless=not headed)
         # One context for the whole run: the site issues a session on first
         # load and reuses it, so a fresh context per company would triple the
         # requests for nothing.
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
 
+        # Listening on the context rather than the page: the extract opens in
+        # a new tab, and a page-level listener never sees a response that
+        # belongs to a different tab.
+        body: list[bytes] = []
+
+        seen: list[str] = []
+
+        def capture(response):
+            kind = response.headers.get("content-type") or ""
+            seen.append(f"{kind.split(';')[0]} {response.url[:70]}")
+            if "application/pdf" in kind:
+                try:
+                    body.append(response.body())
+                except Exception:
+                    pass            # already consumed by the built-in viewer
+
+        context.on("response", capture)
+
         for i, (rid, bid) in enumerate(todo, 1):
-            body: list[bytes] = []
-
-            def capture(response, _body=body):
-                if "application/pdf" in (
-                        response.headers.get("content-type") or ""):
-                    try:
-                        _body.append(response.body())
-                    except Exception:
-                        pass        # response already consumed by the viewer
-
-            page.on("response", capture)
+            body.clear()
+            seen.clear()
             try:
                 page.goto(COMPANY.format(bid), wait_until="domcontentloaded",
                           timeout=30000)
                 dismiss(page)
                 link = page.get_by_text(EXTRACT_LINK).first
+                link.wait_for(state="visible", timeout=15000)
                 link.click(timeout=10000)
-                # The PDF arrives as a blob in a new tab, so waiting on a
-                # download event never fires. The response listener is what
-                # actually catches it.
-                page.wait_for_timeout(6000)
+                # The PDF is a blob in a new tab, so no download event ever
+                # fires and there is nothing to await. Poll instead, and stop
+                # as soon as the response listener has it.
+                for _ in range(30):
+                    if body:
+                        break
+                    page.wait_for_timeout(500)
+                # Close any tab the click opened, or they accumulate across
+                # 439 companies until the browser runs out of memory.
+                for extra in context.pages[1:]:
+                    extra.close()
             except Exception as exc:
                 print(f"  [{i}/{len(todo)}] {bid} failed: "
-                      f"{type(exc).__name__}")
-            finally:
-                page.remove_listener("response", capture)
+                      f"{type(exc).__name__}: {str(exc)[:80]}")
 
             if body:
                 (PDF_DIR / f"{bid}.pdf").write_bytes(body[-1])
@@ -108,6 +124,15 @@ def fetch(conn, limit: int | None) -> None:
             else:
                 missed += 1
                 print(f"  [{i}/{len(todo)}] {bid} no PDF seen")
+                if debug:
+                    print("    responses:")
+                    for line in seen[-12:]:
+                        print(f"      {line}")
+                    try:
+                        print("    page text:",
+                              " ".join(page.inner_text("body").split())[:300])
+                    except Exception:
+                        pass
             time.sleep(DELAY_S)
 
         browser.close()
@@ -168,9 +193,17 @@ def parse(conn, limit: int | None) -> None:
 def main(argv=None) -> None:
     p = base_parser(__doc__)
     p.add_argument("command", choices=["fetch", "parse"])
+    p.add_argument("--headed", action="store_true",
+                   help="show the browser, for watching where a fetch fails")
+    p.add_argument("--debug", action="store_true",
+                   help="on a miss, dump the page text and every response "
+                        "content-type seen")
     args = p.parse_args(argv)
     conn = open_db(args)
-    (fetch if args.command == "fetch" else parse)(conn, args.limit)
+    if args.command == "fetch":
+        fetch(conn, args.limit, headed=args.headed, debug=args.debug)
+    else:
+        parse(conn, args.limit)
 
 
 if __name__ == "__main__":
