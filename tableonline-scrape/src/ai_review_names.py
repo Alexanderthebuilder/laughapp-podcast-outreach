@@ -145,9 +145,23 @@ SCHEMA = {
 }
 
 
+# Names filed with a national register are not scraped strings and are not
+# judged. A trade register extract and the Estonian business register state
+# who the officers are; a model asked to second-guess that adds no accuracy
+# and can only subtract, since an unusual but genuine name is exactly what it
+# is least sure about. It would also be paid for, per name.
+REGISTRY_SOURCES = ("registry_fi", "registry_ee")
+
+
 def candidates(conn, recheck: bool):
-    """Distinct names still attached to a contact, newest verdict wins."""
-    rows = conn.execute("""
+    """Distinct scraped names still attached to a contact, newest verdict wins.
+
+    A name is excluded when every row carrying it came from a register. One
+    that also appears in a crawl is still judged: the crawled spelling is the
+    one that could be site furniture.
+    """
+    placeholders = ",".join("?" * len(REGISTRY_SOURCES))
+    rows = conn.execute(f"""
         SELECT c.contact_name AS name, MIN(c.contact_role) AS role,
                MIN(r.name) AS restaurant, MIN(c.email) AS email,
                COUNT(DISTINCT c.restaurant_id) AS venues
@@ -155,7 +169,8 @@ def candidates(conn, recheck: bool):
         JOIN restaurants r ON r.tableonline_id = c.restaurant_id
         WHERE c.contact_name IS NOT NULL
         GROUP BY LOWER(c.contact_name)
-        ORDER BY venues DESC, name""").fetchall()
+        HAVING SUM(CASE WHEN c.source IN ({placeholders}) THEN 0 ELSE 1 END) > 0
+        ORDER BY venues DESC, name""", REGISTRY_SOURCES).fetchall()
 
     judged = set()
     if not recheck:

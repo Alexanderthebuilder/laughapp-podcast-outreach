@@ -70,10 +70,16 @@ def report(conn) -> None:
     # reached the sheet can still surface later.
     judged = _one(conn, "SELECT COUNT(*) FROM name_verdicts")
     people = _one(conn, "SELECT COUNT(*) FROM name_verdicts WHERE is_person=1")
+    # Registry-sourced names are never judged, so counting them here would
+    # report a backlog that no command can clear.
     unjudged = _one(conn, """
-        SELECT COUNT(DISTINCT c.contact_name) FROM contacts c
-        LEFT JOIN name_verdicts v ON v.name = c.contact_name
-        WHERE c.contact_name IS NOT NULL AND v.name_norm IS NULL""")
+        SELECT COUNT(*) FROM (
+          SELECT c.contact_name FROM contacts c
+          LEFT JOIN name_verdicts v ON v.name = c.contact_name
+          WHERE c.contact_name IS NOT NULL AND v.name_norm IS NULL
+          GROUP BY LOWER(c.contact_name)
+          HAVING SUM(CASE WHEN c.source IN ('registry_fi','registry_ee')
+                          THEN 0 ELSE 1 END) > 0)""")
     print(f"\nNAME JUDGING  {judged} verdicts cached "
           f"({people} people, {judged - people} not)")
     if unjudged:

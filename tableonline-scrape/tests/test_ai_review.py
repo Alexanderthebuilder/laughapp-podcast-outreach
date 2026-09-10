@@ -238,3 +238,48 @@ def test_audit_samples_only_accepted_names(tmp_path, capsys):
     assert "Matti Virtanen" in out
     assert "Aukioloajat Ma" not in out       # rejected, so never sampled
     assert "1 sampled of 1 accepted" in out
+
+
+def _contact(conn, rid, name, source, key):
+    from lib.db import now
+    conn.execute(
+        "INSERT INTO contacts (restaurant_id, contact_name, source,"
+        " confidence, dedupe_key, found_at) VALUES (?,?,?,?,?,?)",
+        (rid, name, source, "high", key, now()))
+
+
+def _judging_db(tmp_path):
+    from lib.db import connect, init_db
+    conn = connect(str(tmp_path / "t.sqlite"))
+    init_db(conn)
+    conn.execute("INSERT INTO restaurants (tableonline_id, name) VALUES (1,'A')")
+    conn.execute("INSERT INTO restaurants (tableonline_id, name) VALUES (2,'B')")
+    return conn
+
+
+def test_registry_names_are_never_queued_for_judging(tmp_path):
+    """A trade register extract states who the officers are. A model asked to
+    second-guess that adds no accuracy and can only subtract — an unusual but
+    genuine name is what it is least sure about — and it is paid for per name."""
+    from src.ai_review_names import candidates
+
+    conn = _judging_db(tmp_path)
+    _contact(conn, 1, "Matti Virtanen", "registry_fi", "virre:Matti Virtanen")
+    _contact(conn, 1, "Mari Tamm", "registry_ee", "ee:Mari Tamm")
+    _contact(conn, 1, "Aukioloajat Ma", "website_other", "junk-1")
+    conn.commit()
+
+    assert [c["name"] for c in candidates(conn, recheck=False)] == ["Aukioloajat Ma"]
+
+
+def test_a_name_seen_both_scraped_and_filed_is_still_judged(tmp_path):
+    """The crawled spelling is the one that could be site furniture, so the
+    exclusion has to be per name rather than per row."""
+    from src.ai_review_names import candidates
+
+    conn = _judging_db(tmp_path)
+    _contact(conn, 1, "Matti Virtanen", "registry_fi", "virre:Matti Virtanen")
+    _contact(conn, 2, "Matti Virtanen", "website_privacy", "web:Matti Virtanen")
+    conn.commit()
+
+    assert [c["name"] for c in candidates(conn, recheck=False)] == ["Matti Virtanen"]
