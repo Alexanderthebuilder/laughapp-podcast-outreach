@@ -70,6 +70,19 @@ async (url) => {
 """
 
 
+def save_pdf(path, data: bytes) -> bool:
+    """Write the extract, but only if it is one.
+
+    A blob read that half-works returns bytes that are not a document. Saved
+    unchecked, the parse step later reports an unreadable file and the real
+    cause — a fetch problem — is two steps away from where it shows up.
+    """
+    if not data.startswith(b"%PDF"):
+        return False
+    path.write_bytes(data)
+    return True
+
+
 def _read_blob(page, url: str) -> bytes | None:
     try:
         return base64.b64decode(page.evaluate(_READ_BLOB, url))
@@ -146,9 +159,9 @@ def fetch(conn, limit: int | None, headed: bool = False,
                         break
                     page.wait_for_timeout(500)
                 if blobs and not body:
-                    got = _read_blob(page, blobs[-1])
-                    if got:
-                        body.append(got)
+                    from_blob = _read_blob(page, blobs[-1])
+                    if from_blob:
+                        body.append(from_blob)
                 # Close any tab the click opened, or they accumulate across
                 # 439 companies until the browser runs out of memory.
                 for extra in context.pages[1:]:
@@ -157,18 +170,14 @@ def fetch(conn, limit: int | None, headed: bool = False,
                 print(f"  [{i}/{len(todo)}] {bid} failed: "
                       f"{type(exc).__name__}: {str(exc)[:80]}")
 
-            # A blob read that half-worked returns bytes that are not a PDF,
-            # and the parse step would then report an unreadable file for a
-            # fetch problem. Check the magic number here instead.
-            if body and body[-1].startswith(b"%PDF"):
-                (PDF_DIR / f"{bid}.pdf").write_bytes(body[-1])
+            if body and save_pdf(PDF_DIR / f"{bid}.pdf", body[-1]):
                 got += 1
                 print(f"  [{i}/{len(todo)}] {bid} saved "
                       f"({len(body[-1]) // 1024} kB)")
             elif body:
                 missed += 1
-                print(f"  [{i}/{len(todo)}] {bid} got {len(body[-1])} bytes "
-                      f"that are not a PDF")
+                print(f"  [{i}/{len(todo)}] {bid} returned "
+                      f"{len(body[-1])} bytes that are not a PDF")
             else:
                 missed += 1
                 print(f"  [{i}/{len(todo)}] {bid} no PDF seen")
@@ -213,9 +222,9 @@ def parse(conn, limit: int | None) -> None:
         except Exception as exc:
             print(f"  {path.name} unreadable: {type(exc).__name__}")
             continue
-        got = parse_extract(text)
+        extract = parse_extract(text)
 
-        for officer in got["officers"]:
+        for officer in extract["officers"]:
             upsert(conn, "contacts",
                    {"restaurant_id": rid, "dedupe_key": f"virre:{officer.name}"},
                    {"contact_name": officer.name,
@@ -226,10 +235,10 @@ def parse(conn, limit: int | None) -> None:
                     "confidence": "high", "found_at": now()})
             people += 1
 
-        if got.get("email"):
+        if extract.get("email"):
             upsert(conn, "contacts",
-                   {"restaurant_id": rid, "dedupe_key": got["email"]},
-                   {"email": got["email"], "source": "registry_fi",
+                   {"restaurant_id": rid, "dedupe_key": extract["email"]},
+                   {"email": extract["email"], "source": "registry_fi",
                     "source_url": COMPANY.format(path.stem),
                     "confidence": "high", "found_at": now()})
             mails += 1

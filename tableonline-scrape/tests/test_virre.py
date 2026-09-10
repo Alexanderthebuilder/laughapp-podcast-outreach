@@ -130,3 +130,17 @@ def test_table_furniture_is_not_mistaken_for_people(junk):
 def test_an_extract_with_no_officers_parses_to_nothing():
     got = parse_extract("Y-tunnus: 1234567-8\nToiminimi Tyhja Oy\n")
     assert got["officers"] == [] and got["business_id"] == "1234567-8"
+
+
+def test_only_a_real_pdf_is_saved(tmp_path):
+    """A blob read that half-works returns bytes that are not a document.
+    Saved unchecked, the failure surfaces at parse time as an unreadable file
+    and the real cause is two steps away."""
+    from src.phase5_virre import save_pdf
+
+    good, bad = tmp_path / "good.pdf", tmp_path / "bad.pdf"
+    assert save_pdf(good, b"%PDF-1.7\nbody") is True
+    assert good.read_bytes().startswith(b"%PDF")
+
+    assert save_pdf(bad, b"<!doctype html><html>error</html>") is False
+    assert not bad.exists()
